@@ -1,0 +1,53 @@
+# Publishes @evolving-edge/astro to npm on a version tag.
+#
+# There is deliberately no NPM_TOKEN. This uses npm trusted publishing: GitHub
+# mints a short-lived OIDC token that npm verifies against a publisher
+# configured on npmjs.com (org `evolving-edge`, repo `astro`, workflow
+# `publish.yml`). Nothing long-lived exists to leak, and nobody's personal
+# credentials are in the release path — so a maintainer leaving does not
+# strand the package.
+#
+# One-time setup on npmjs.com, by an owner of the @evolving-edge org:
+#   Package settings -> Trusted publishers -> Add
+#     Organization:      evolving-edge
+#     Repository:        astro
+#     Workflow filename: publish.yml
+#     Allowed actions:   npm publish
+#
+# Keep at least two people with the `owner` role on the npm org. That, not the
+# token strategy, is what actually fixes the bus factor.
+name: Publish to npm
+
+on:
+  push:
+    tags: ['v*']
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  id-token: write # required for OIDC
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24' # trusted publishing needs node >=22.14 / npm >=11.5.1
+          registry-url: 'https://registry.npmjs.org'
+
+      - run: npm ci
+      - run: npm test
+
+      - name: Fail if the tag does not match package.json
+        run: |
+          TAG="${GITHUB_REF_NAME#v}"
+          PKG="$(node -p "require('./package.json').version")"
+          if [ "$TAG" != "$PKG" ]; then
+            echo "Tag $TAG does not match package.json version $PKG" >&2
+            exit 1
+          fi
+
+      - run: npm publish
