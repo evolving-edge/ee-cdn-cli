@@ -34,6 +34,22 @@ Set `EE_CDN_TOKEN` to a deploy token from the portal (Workload → Deploy
 Tokens). Nothing else is required — the `ee-builder` binary is downloaded and
 cached automatically.
 
+## Put it last in `integrations`
+
+Astro runs `astro:build:done` hooks in integration order, and this one packages
+the whole of `dist/`. Any integration that *writes* to `dist/` in its own
+`astro:build:done` — `@astrojs/sitemap` is the common one — must run first, or
+its output is not in the workload you publish.
+
+This fails silently: `dist/` on disk looks correct afterwards, because the
+sitemap is written a moment later. The only visible symptom is that the
+deployed site is missing files. To check, compare the hash the integration logs
+against an independent one:
+
+```bash
+ee-builder -src dist -hash-only    # must equal the logged "Content hash"
+```
+
 ## Two required Astro settings
 
 `trailingSlash: 'always'` and `build: { format: 'directory' }` are not
