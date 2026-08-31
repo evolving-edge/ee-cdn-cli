@@ -26,8 +26,14 @@ const PASSTHROUGH = [
   'fileCount',
 ];
 
-/** The control plane caps request bodies at 100 MB. */
+/**
+ * The control plane caps request bodies at 100 MiB — handleWorkloadStoreRaw
+ * wraps the body in `http.MaxBytesReader(w, r.Body, 100<<20)`. Mirrored here so
+ * an oversized workload fails locally with a clear message rather than as a
+ * truncated read on their side.
+ */
 const MAX_BYTES = 100 * 1024 * 1024;
+const MIB = 1024 * 1024;
 
 export async function storeWorkload({
   filePath,
@@ -40,8 +46,8 @@ export async function storeWorkload({
   const { size } = statSync(filePath);
   if (size > MAX_BYTES) {
     throw new Error(
-      `Workload is ${(size / 1e6).toFixed(1)} MB; the control plane rejects ` +
-        `bodies over ${MAX_BYTES / 1e6} MB.`,
+      `Workload is ${(size / MIB).toFixed(1)} MiB; the control plane rejects ` +
+        `bodies over ${MAX_BYTES / MIB} MiB.`,
     );
   }
 
