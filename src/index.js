@@ -291,11 +291,20 @@ export default function eeCdn(options = {}) {
         });
         rmSync(out, { force: true });
 
-        logger.info(`Deployed ${deploy.domain} → ${result.hash.slice(0, 16)}…`);
+        // Deliberately not "Deployed". The upload is confirmed — the domain
+        // binding is not. handleWorkloadStoreRaw treats PutDomainMapping as
+        // non-fatal (it logs and returns 200 regardless) and reports nothing
+        // about it in the response body, so a failed binding is invisible from
+        // here. Claiming a deploy on that evidence is how a live 404 reads as
+        // a green build.
+        logger.info(
+          `Requested domain binding ${deploy.domain} → ${result.hash.slice(0, 16)}…`,
+        );
         logger.info(
           'Propagation takes up to ~90s (alias cache 60s, edge domain cache ' +
-            '30s, heartbeat 30s).',
+            '30s, heartbeat 30s). Confirm the binding actually took with:',
         );
+        logger.info(`  curl -sS -o /dev/null -w '%{http_code}\n' https://${deploy.domain}/`);
       },
     },
   };
