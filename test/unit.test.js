@@ -75,7 +75,7 @@ describe('integration shape', () => {
 
   it('registers the documented hooks', () => {
     const it_ = eeCdn();
-    assert.equal(it_.name, '@evolving-edge/cdn');
+    assert.equal(it_.name, '@evolving-edge/cdn-cli');
     assert.deepEqual(Object.keys(it_.hooks).sort(), [
       'astro:build:done',
       'astro:build:start',

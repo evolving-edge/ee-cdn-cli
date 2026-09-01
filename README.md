@@ -1,4 +1,4 @@
-# @evolving-edge/cdn
+# @evolving-edge/cdn-cli
 
 Publish a static site to the [Evolving Edge](https://www.evolvingedge.ai) CDN.
 
@@ -15,7 +15,7 @@ Works with anything that emits a directory — Hugo, Eleventy, Jekyll, Zola,
 Publii, hand-written HTML.
 
 ```bash
-npx @evolving-edge/cdn ./public --domain blog.example.com --project proj_abc
+npx @evolving-edge/cdn-cli ./public --domain blog.example.com --project proj_abc
 ```
 
 ```
@@ -37,13 +37,13 @@ point `ee-deploy` at that folder.
 ## Astro
 
 ```bash
-npm install -D @evolving-edge/cdn
+npm install -D @evolving-edge/cdn-cli
 ```
 
 ```js
 // astro.config.mjs
 import { defineConfig } from 'astro/config';
-import eeCdn from '@evolving-edge/cdn/astro';
+import eeCdn from '@evolving-edge/cdn-cli/astro';
 
 export default defineConfig({
   site: 'https://blog.example.com',

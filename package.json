@@ -1,5 +1,5 @@
 {
-  "name": "@evolving-edge/cdn",
+  "name": "@evolving-edge/cdn-cli",
   "version": "0.1.0",
   "description": "Publish a static site to the Evolving Edge CDN \u2014 a CLI for any generator, plus an Astro integration.",
   "type": "module",

@@ -1,5 +1,5 @@
 /**
- * @evolving-edge/cdn — publish an Astro site to the Evolving Edge CDN.
+ * @evolving-edge/cdn-cli — publish an Astro site to the Evolving Edge CDN.
  *
  * The build produces `dist/`, which is packaged into a single content-addressed
  * `.ee` workload and PUT to the control plane. Edge nodes resolve your domain
@@ -8,7 +8,7 @@
  *
  * Minimal usage:
  *
- *   import eeCdn from '@evolving-edge/cdn';
+ *   import eeCdn from '@evolving-edge/cdn-cli';
  *
  *   export default defineConfig({
  *     site: 'https://blog.example.com',
@@ -98,7 +98,7 @@ export default function eeCdn(options = {}) {
   }
 
   return {
-    name: '@evolving-edge/cdn',
+    name: '@evolving-edge/cdn-cli',
     hooks: {
       'astro:config:setup': ({ config, logger }) => {
         projectRoot = fileURLToPath(config.root);
@@ -110,7 +110,7 @@ export default function eeCdn(options = {}) {
         // redirect, so 'file' format 404s every page on the site.
         if (config.build?.format === 'file') {
           throw new Error(
-            "[@evolving-edge/cdn] build.format: 'file' is incompatible with " +
+            "[@evolving-edge/cdn-cli] build.format: 'file' is incompatible with " +
               'ee-cdn: it emits page.html but links to /page, and the edge ' +
               'resolves paths literally, so every page would 404. Use ' +
               "build.format: 'directory' with trailingSlash: 'always'.",
