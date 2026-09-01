@@ -1,4 +1,4 @@
-# Publishes @evolving-edge/astro to npm on a version tag.
+# Publishes @evolving-edge/cdn to npm on a version tag.
 #
 # There is deliberately no NPM_TOKEN. This uses npm trusted publishing: GitHub
 # mints a short-lived OIDC token that npm verifies against a publisher
