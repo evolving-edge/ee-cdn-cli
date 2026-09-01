@@ -38,7 +38,7 @@ import {
 } from './builder.js';
 import { computeDirectoryHash, loadCache, saveCache } from './content-hash.js';
 import { findHtmlFiles, transformHtml } from './html.js';
-import { storeWorkload } from './upload.js';
+import { deploySite } from './deploy.js';
 
 const DEFAULT_CDN_URL = 'https://cdn.3dge.app';
 
@@ -98,7 +98,7 @@ export default function eeCdn(options = {}) {
   }
 
   return {
-    name: '@evolving-edge/astro',
+    name: '@evolving-edge/cdn',
     hooks: {
       'astro:config:setup': ({ config, logger }) => {
         projectRoot = fileURLToPath(config.root);
@@ -247,39 +247,22 @@ export default function eeCdn(options = {}) {
 
         if (!deploy?.domain) return;
 
-        const level = deploy.level ?? 0;
-        const bin = await builderBin(logger);
-        const out = scratchFile('site.ee');
-
-        logger.info(`Packaging site as a Level ${level} workload…`);
-        const result = runBuilder(bin, { src: distPath, out, level });
-        logger.info(`Content hash ${result.hash}`);
-
-        if (dryRun) {
-          logger.info(`Dry run — not uploading. Workload left at ${out}`);
-          return;
-        }
-        if (!upload) {
-          rmSync(out, { force: true });
-          return;
-        }
-        if (!token) {
-          throw new Error(
-            'No deploy token. Set EE_CDN_TOKEN (portal → Workload → Deploy ' +
-              'Tokens) or pass `token`.',
-          );
-        }
-
-        await storeWorkload({
-          filePath: out,
-          hash: result.hash,
+        await deploySite({
+          dir: distPath,
+          domain: deploy.domain,
+          name: deploy.name,
+          level: deploy.level ?? 0,
           controlPlane,
           token,
-          params: {
-            domain: deploy.domain,
-            encryptionLevel: `level${level}`,
-            fileCount: result.fileCount,
-            name: deploy.name ?? deploy.domain,
+          // `upload: false` packages nothing and uploads nothing; a dry run
+          // packages but stops short of the network.
+          dryRun: dryRun || !upload,
+          builderPath: builderPath ? join(projectRoot, builderPath) : null,
+          builderVersion,
+          builderChecksum,
+          lockfilePath: join(projectRoot, lockfile),
+          cacheDir,
+          metadata: {
             projectId: deploy.projectId,
             orgId: deploy.orgId,
             projectName: deploy.projectName,
@@ -289,22 +272,6 @@ export default function eeCdn(options = {}) {
           },
           logger,
         });
-        rmSync(out, { force: true });
-
-        // Deliberately not "Deployed". The upload is confirmed — the domain
-        // binding is not. handleWorkloadStoreRaw treats PutDomainMapping as
-        // non-fatal (it logs and returns 200 regardless) and reports nothing
-        // about it in the response body, so a failed binding is invisible from
-        // here. Claiming a deploy on that evidence is how a live 404 reads as
-        // a green build.
-        logger.info(
-          `Requested domain binding ${deploy.domain} → ${result.hash.slice(0, 16)}…`,
-        );
-        logger.info(
-          'Propagation takes up to ~90s (alias cache 60s, edge domain cache ' +
-            '30s, heartbeat 30s). Confirm the binding actually took with:',
-        );
-        logger.info(`  curl -sS -o /dev/null -w '%{http_code}\n' https://${deploy.domain}/`);
       },
     },
   };

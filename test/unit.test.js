@@ -6,7 +6,7 @@ import { after, describe, it } from 'node:test';
 
 import { computeDirectoryHash, loadCache, saveCache } from '../src/content-hash.js';
 import { toKey } from '../src/builder.js';
-import eeCdn from '../src/index.js';
+import eeCdn from '../src/astro.js';
 
 const scratch = mkdtempSync(join(tmpdir(), 'ee-astro-test-'));
 after(() => rmSync(scratch, { recursive: true, force: true }));
@@ -75,7 +75,7 @@ describe('integration shape', () => {
 
   it('registers the documented hooks', () => {
     const it_ = eeCdn();
-    assert.equal(it_.name, '@evolving-edge/astro');
+    assert.equal(it_.name, '@evolving-edge/cdn');
     assert.deepEqual(Object.keys(it_.hooks).sort(), [
       'astro:build:done',
       'astro:build:start',

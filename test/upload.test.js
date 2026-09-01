@@ -18,6 +18,7 @@ import { join } from 'node:path';
 import { after, afterEach, describe, it } from 'node:test';
 
 import { storeWorkload } from '../src/upload.js';
+import { defaultCacheDir } from '../src/deploy.js';
 
 const scratch = mkdtempSync(join(tmpdir(), 'ee-upload-test-'));
 after(() => rmSync(scratch, { recursive: true, force: true }));
@@ -195,5 +196,24 @@ describe('storeWorkload success handling', () => {
     const lines = [];
     await call({ logger: { info: (m) => lines.push(m), warn() {} } });
     assert.match(lines.join('\n'), /alias good-tank/);
+  });
+});
+
+describe('defaultCacheDir', () => {
+  it('is absolute and namespaced, so the CLI never writes into the site dir', () => {
+    const d = defaultCacheDir();
+    assert.ok(d.startsWith('/') || /^[A-Za-z]:/.test(d), d);
+    assert.match(d, /evolving-edge$/);
+  });
+
+  it('honours XDG_CACHE_HOME', () => {
+    const prev = process.env.XDG_CACHE_HOME;
+    process.env.XDG_CACHE_HOME = '/tmp/xdg-probe';
+    try {
+      assert.equal(defaultCacheDir(), '/tmp/xdg-probe/evolving-edge');
+    } finally {
+      if (prev === undefined) delete process.env.XDG_CACHE_HOME;
+      else process.env.XDG_CACHE_HOME = prev;
+    }
   });
 });

@@ -1,7 +1,7 @@
 {
-  "name": "@evolving-edge/astro",
+  "name": "@evolving-edge/cdn",
   "version": "0.1.0",
-  "description": "Astro integration for the Evolving Edge CDN \u2014 packages your build as a content-addressed .ee workload and publishes it to the edge.",
+  "description": "Publish a static site to the Evolving Edge CDN — a CLI for any generator, plus an Astro integration.",
   "type": "module",
   "license": "MIT",
   "author": "Evolving Edge",
@@ -14,22 +14,31 @@
     "url": "https://github.com/evolving-edge/astro/issues"
   },
   "keywords": [
-    "astro",
-    "astro-integration",
     "cdn",
     "edge",
-    "static-site"
+    "static-site",
+    "deploy",
+    "cli",
+    "astro",
+    "astro-integration",
+    "hugo",
+    "eleventy",
+    "publii"
   ],
   "exports": {
     ".": {
-      "types": "./index.d.ts",
-      "default": "./src/index.js"
-    }
+      "default": "./src/deploy.js"
+    },
+    "./astro": {
+      "types": "./astro.d.ts",
+      "default": "./src/astro.js"
+    },
+    "./package.json": "./package.json"
   },
-  "types": "./index.d.ts",
   "files": [
+    "bin",
     "src",
-    "index.d.ts",
+    "astro.d.ts",
     "README.md",
     "LICENSE"
   ],
@@ -50,5 +59,13 @@
   },
   "publishConfig": {
     "access": "public"
+  },
+  "bin": {
+    "ee-deploy": "./bin/ee-deploy.js"
+  },
+  "peerDependenciesMeta": {
+    "astro": {
+      "optional": true
+    }
   }
 }

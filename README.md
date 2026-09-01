@@ -1,22 +1,49 @@
-# @evolving-edge/astro
+# @evolving-edge/cdn
 
-Publish an Astro site to the [Evolving Edge](https://www.evolvingedge.ai) CDN.
+Publish a static site to the [Evolving Edge](https://www.evolvingedge.ai) CDN.
 
 Your build is packaged into a single content-addressed `.ee` workload and sent
 to the control plane. Edge nodes resolve your domain to that content hash and
 serve it, sourcing bytes from peer nodes in-region before falling back to
 origin.
 
+Two ways in: a CLI for any generator, and an Astro integration.
+
+## CLI
+
+Works with anything that emits a directory — Hugo, Eleventy, Jekyll, Zola,
+Publii, hand-written HTML.
+
 ```bash
-npm install -D @evolving-edge/astro
+npx @evolving-edge/cdn ./public --domain blog.example.com --project proj_abc
 ```
 
-## Usage
+```
+ee-deploy <directory> --domain <host> [options]
+
+  --project <id>    Project ID. Required if your token is project-scoped.
+  --level <0|1|2>   Encryption level. Default 0.
+  --dry-run         Package but do not upload.
+  --help            Everything else.
+```
+
+The deploy token comes from the portal (Workload → Deploy Tokens) and is read
+from `EE_CDN_TOKEN`; `EE_CDN_PROJECT_ID` and `EE_CDN_BUILD_ID` supply defaults
+for `--project` and `--build`.
+
+**Publii**: set deployment to *Manual*, which writes the site to a folder, then
+point `ee-deploy` at that folder.
+
+## Astro
+
+```bash
+npm install -D @evolving-edge/cdn
+```
 
 ```js
 // astro.config.mjs
 import { defineConfig } from 'astro/config';
-import eeCdn from '@evolving-edge/astro';
+import eeCdn from '@evolving-edge/cdn/astro';
 
 export default defineConfig({
   site: 'https://blog.example.com',
