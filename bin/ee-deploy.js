@@ -123,6 +123,12 @@ if (!projectId && !opts['dry-run']) {
   );
 }
 
+// Packaging takes time and prints a content hash, which reads like progress.
+// A missing token is only discovered at upload, so check it up front.
+if (!opts['dry-run'] && !(opts.token ?? process.env.EE_CDN_TOKEN)) {
+  fail('No deploy token. Set EE_CDN_TOKEN (portal → Workload → Deploy Tokens) or pass --token.');
+}
+
 const logger = opts.quiet
   ? { info() {}, warn: console.warn }
   : { info: (m) => console.log(m), warn: (m) => console.warn(m) };
