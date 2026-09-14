@@ -2,7 +2,7 @@
 #
 # There is deliberately no NPM_TOKEN. This uses npm trusted publishing: GitHub
 # mints a short-lived OIDC token that npm verifies against a publisher
-# configured on npmjs.com (org `evolving-edge`, repo `astro`, workflow
+# configured on npmjs.com (org `evolving-edge`, repo `cdn-cli`, workflow
 # `publish.yml`). Nothing long-lived exists to leak, and nobody's personal
 # credentials are in the release path — so a maintainer leaving does not
 # strand the package.
@@ -10,7 +10,7 @@
 # One-time setup on npmjs.com, by an owner of the @evolving-edge org:
 #   Package settings -> Trusted publishers -> Add
 #     Organization:      evolving-edge
-#     Repository:        astro
+#     Repository:        cdn-cli
 #     Workflow filename: publish.yml
 #     Allowed actions:   npm publish
 #
