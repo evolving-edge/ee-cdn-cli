@@ -98,10 +98,16 @@ function explain(status) {
         'The token was rejected. Check EE_CDN_TOKEN is a current deploy token ' +
         'from the portal (Workload → Deploy Tokens).'
       );
+    // The control plane sends a different 403 body for each cause, and the
+    // body is printed above this hint. "Insufficient permissions" comes from
+    // the auth middleware, before the token's project is ever looked at.
     case 403:
       return (
-        'The token is revoked, unknown, or scoped to a different project. ' +
-        'If it is project-scoped, deploy.projectId must match it exactly.'
+        'If the error is "Insufficient permissions", the token is valid but ' +
+        'lacks the workload:write role — check its roles in the portal ' +
+        '(Workload → Deploy Tokens). Otherwise the token is revoked, unknown, ' +
+        'or scoped to a different project; if it is project-scoped, ' +
+        'deploy.projectId must match it exactly.'
       );
     case 500:
       return (
