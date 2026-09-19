@@ -378,6 +378,9 @@ describe('Level 2 secret reaches the upload from both callers', () => {
       builderPath: 'fake-ee-builder-astro',
       controlPlane: 'https://cp.example.com',
       token: 't',
+      // Required for the upload to happen at all: sub-workload uploads are
+      // gated on a real deploy target, not merely on uploading being enabled.
+      deploy: { domain: 'example.com' },
       outputFile: 'workloads.json',
       cacheFile: '.cache.json',
     });

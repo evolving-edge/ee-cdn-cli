@@ -2,6 +2,7 @@ import assert from 'node:assert/strict';
 import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { pathToFileURL } from 'node:url';
 import { after, describe, it } from 'node:test';
 
 import { computeDirectoryHash, loadCache, saveCache } from '../src/content-hash.js';
@@ -157,5 +158,105 @@ describe('key embedding by encryption level (#262)', () => {
     });
     await run();
     assert.ok(readFileSync(file, 'utf8').includes('data-ee-key="LEGACY-KEY"'));
+  });
+});
+
+describe('sub-workload uploads follow the deploy target (#263)', () => {
+  const root = mkdtempSync(join(tmpdir(), 'ee-gate-test-'));
+  after(() => rmSync(root, { recursive: true, force: true }));
+
+  function project(name) {
+    const dir = join(root, name);
+    mkdirSync(join(dir, 'assets'), { recursive: true });
+    writeFileSync(join(dir, 'assets', 'a.txt'), 'content');
+    writeFileSync(
+      join(dir, 'builder'),
+      `#!/bin/sh\nout=""\nwhile [ $# -gt 0 ]; do [ "$1" = "-out" ] && out="$2"; shift; done\n` +
+        `[ -n "$out" ] && printf 'x' > "$out"\n` +
+        `echo "Content hash: ${'f'.repeat(64)}"\necho "Secret: ${'a'.repeat(64)}"\n` +
+        `echo "Salt: ${'b'.repeat(64)}"\necho "Files: 1"\n`,
+      { mode: 0o755 },
+    );
+    return dir;
+  }
+
+  async function run(dir, opts = {}) {
+    const integration = eeCdn({
+      workloads: [{ name: 'w', src: 'assets', level: opts.level ?? 0 }],
+      builderPath: 'builder',
+      controlPlane: 'https://cp.example.com',
+      token: 't',
+      outputFile: 'workloads.json',
+      cacheFile: '.cache.json',
+      ...(opts.deploy ? { deploy: opts.deploy } : {}),
+    });
+    const logger = { info() {}, warn() {} };
+    integration.hooks['astro:config:setup']({
+      config: { root: pathToFileURL(`${dir}/`), build: {} },
+      logger,
+    });
+    await integration.hooks['astro:build:start']({ logger });
+  }
+
+  // The README promises that omitting `deploy` builds and validates without
+  // publishing. Gating on `upload` alone published anyway, and demanded a token
+  // to do it -- the one thing the caller had asked not to happen.
+  it('does not upload when no deploy target is configured', async () => {
+    const dir = project('no-deploy');
+    let called = 0;
+    const realFetch = globalThis.fetch;
+    globalThis.fetch = async () => {
+      called++;
+      return { ok: true, status: 200, statusText: 'OK', text: async () => '{}' };
+    };
+    try {
+      await run(dir);
+    } finally {
+      globalThis.fetch = realFetch;
+    }
+    assert.equal(called, 0, 'no deploy target means no upload');
+  });
+
+  it('uploads once a deploy target is configured', async () => {
+    const dir = project('with-deploy');
+    let called = 0;
+    const realFetch = globalThis.fetch;
+    globalThis.fetch = async () => {
+      called++;
+      return { ok: true, status: 200, statusText: 'OK', text: async () => '{}' };
+    };
+    try {
+      await run(dir, { deploy: { domain: 'example.com' } });
+    } finally {
+      globalThis.fetch = realFetch;
+    }
+    assert.equal(called, 1, 'a configured deploy target uploads');
+  });
+
+  // The level-in-cache-key fix landed on the Level 2 branch because it was
+  // load-bearing there. This is the other direction it protects: a Level 1
+  // build must not be handed back for a Level 0 workload, which would serve an
+  // encrypted artifact as though it were public.
+  it('does not reuse a Level 1 build for a Level 0 workload', async () => {
+    const dir = project('level-down');
+    const realFetch = globalThis.fetch;
+    globalThis.fetch = async () => ({
+      ok: true,
+      status: 200,
+      statusText: 'OK',
+      text: async () => '{}',
+    });
+    try {
+      await run(dir, { level: 1, deploy: { domain: 'example.com' } });
+      const l1 = JSON.parse(readFileSync(join(dir, 'workloads.json'), 'utf8'));
+      assert.ok(l1.w.key, 'the Level 1 build has a key');
+
+      await run(dir, { level: 0, deploy: { domain: 'example.com' } });
+      const l0 = JSON.parse(readFileSync(join(dir, 'workloads.json'), 'utf8'));
+      assert.equal(l0.w.key, undefined, 'a Level 0 workload must not inherit it');
+      assert.equal(l0.w.level, 0);
+    } finally {
+      globalThis.fetch = realFetch;
+    }
   });
 });

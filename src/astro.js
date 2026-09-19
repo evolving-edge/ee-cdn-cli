@@ -136,7 +136,13 @@ export default function eeCdn(options = {}) {
       'astro:build:start': async ({ logger }) => {
         if (workloads.length === 0) return;
 
-        const willUpload = upload && !dryRun;
+        // Gated on a deploy target, matching the site-level guard in
+        // astro:build:done and the README, which says omitting `deploy` builds
+        // and validates without publishing. This asked only whether uploading
+        // was enabled, so a config with workloads and no deploy target
+        // published every sub-workload anyway -- and demanded a token to do it
+        // -- which is the one thing the caller had asked not to happen.
+        const willUpload = upload && !dryRun && Boolean(deploy?.domain);
 
         const bin = await builderBin(logger);
         const built = {};
