@@ -37,7 +37,17 @@ function rehypeInjectEE(workloads, defaultWorkload, sdkUrl) {
       const workload = workloads[name];
       if (!workload) return;
       node.properties.dataEeWorkload = workload.hash;
-      if (workload.key) node.properties.dataEeKey = workload.key;
+      // Level 1 only, and checked here as well as at the point the key is
+      // derived. The producer is now correct, but this is the step that puts
+      // material into markup we ship, so it enforces the rule rather than
+      // trusting its input: a Level 2 key reaching the page would silently undo
+      // the gateway model, and nothing downstream would report it (#262).
+      //
+      // `level` is absent on entries written by older builds; those only ever
+      // carried a key for Level 1, so treating unknown as Level 1 keeps them
+      // working without letting a Level 2 key through.
+      const level = workload.level ?? 1;
+      if (workload.key && level === 1) node.properties.dataEeKey = workload.key;
     });
 
     if (!found || !sdkUrl) return;

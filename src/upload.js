@@ -41,6 +41,7 @@ export async function storeWorkload({
   controlPlane,
   token,
   params = {},
+  secret = null,
   logger,
 }) {
   const { size } = statSync(filePath);
@@ -65,6 +66,7 @@ export async function storeWorkload({
     headers: {
       Authorization: `Bearer ${token}`,
       'Content-Type': 'application/octet-stream',
+      ...secretHeader(secret),
     },
     body: readFileSync(filePath),
   });
@@ -88,6 +90,34 @@ export async function storeWorkload({
       (body.alias ? ` (alias ${body.alias})` : ''),
   );
   return body;
+}
+
+/**
+ * The Level 2 workload secret, as a header.
+ *
+ * Without it the control plane stores the ciphertext and nothing else: it
+ * registers a gateway secret only when this header (or the legacy `secret`
+ * query parameter) is present, so `/api/access-token` has nothing to hand out
+ * and every edge request for the workload fails with "decryption key
+ * unavailable". The upload reports success either way, which is what made this
+ * hard to see -- the deploy is green and the site is broken.
+ *
+ * A header rather than the query parameter, deliberately. A query string is the
+ * part of a request that proxies, access logs and traces record by default, so
+ * the URL form can publish a long-lived key before the control plane has even
+ * stored it. The query form still works server-side for older CLI builds; new
+ * callers do not use it.
+ *
+ * Only the secret travels. The control plane takes the matching salt from the
+ * .ee header's own kdfSalt, so sending the derived key would be both wrong and
+ * more material than it needs.
+ *
+ * Callers must pass this for Level 2 *only*. A Level 1 key must never reach a
+ * server -- that is the entire distinction between the two levels, and sending
+ * it here would be the same defect as #208.
+ */
+function secretHeader(secret) {
+  return secret ? { 'X-EE-Workload-Secret': secret } : {};
 }
 
 /** Turn the failure modes we know about into something actionable. */

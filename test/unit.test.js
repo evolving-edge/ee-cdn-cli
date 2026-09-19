@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import { mkdtempSync, mkdirSync, writeFileSync, rmSync } from 'node:fs';
+import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { after, describe, it } from 'node:test';
@@ -7,6 +7,7 @@ import { after, describe, it } from 'node:test';
 import { computeDirectoryHash, loadCache, saveCache } from '../src/content-hash.js';
 import { toKey } from '../src/builder.js';
 import eeCdn from '../src/astro.js';
+import { transformHtml } from '../src/html.js';
 
 const scratch = mkdtempSync(join(tmpdir(), 'ee-astro-test-'));
 after(() => rmSync(scratch, { recursive: true, force: true }));
@@ -104,5 +105,57 @@ describe('integration shape', () => {
   it('accepts a conforming config', () => {
     const setup = eeCdn().hooks['astro:config:setup'];
     assert.doesNotThrow(() => setup({ config: config(), logger }));
+  });
+});
+
+describe('key embedding by encryption level (#262)', () => {
+  const htmlDir = mkdtempSync(join(tmpdir(), 'ee-html-test-'));
+  after(() => rmSync(htmlDir, { recursive: true, force: true }));
+
+  function build(name, workloads) {
+    const file = join(htmlDir, `${name}.html`);
+    writeFileSync(
+      file,
+      '<html><body>' +
+        '<img data-ee="/images/photo.svg" data-ee-workload="w" />' +
+        '</body></html>',
+    );
+    return { file, run: () => transformHtml(file, workloads, 'w', null) };
+  }
+
+  // The whole point of Level 2: the control plane holds the secret and issues
+  // short-lived revocable tokens. A key in the markup hands the browser the
+  // long-lived material instead, which is not Level 2 by any definition -- and
+  // nothing downstream would report it, because the page renders correctly.
+  it('never writes data-ee-key for a Level 2 workload', async () => {
+    const { file, run } = build('level2', {
+      w: { hash: 'h'.repeat(64), level: 2, key: 'LEAKED-LEVEL-2-KEY' },
+    });
+    await run();
+    const out = readFileSync(file, 'utf8');
+    assert.ok(!out.includes('LEAKED-LEVEL-2-KEY'), 'Level 2 key must not reach the page');
+    assert.ok(!out.includes('data-ee-key'), 'no data-ee-key attribute at Level 2');
+    assert.ok(out.includes('h'.repeat(64)), 'the hash is still resolved');
+  });
+
+  // Level 1 is client-side decryption, so the key belongs in the page. Asserted
+  // so the fix above cannot be "fixed" into breaking Level 1.
+  it('still writes data-ee-key for a Level 1 workload', async () => {
+    const { file, run } = build('level1', {
+      w: { hash: 'h'.repeat(64), level: 1, key: 'LEVEL-1-KEY' },
+    });
+    await run();
+    const out = readFileSync(file, 'utf8');
+    assert.ok(out.includes('data-ee-key="LEVEL-1-KEY"'), 'Level 1 key belongs in the page');
+  });
+
+  // Entries written by an older build carry no `level`. Those only ever had a
+  // key at Level 1, so the absent field must not silently drop it.
+  it('treats a missing level as Level 1 for backward compatibility', async () => {
+    const { file, run } = build('legacy', {
+      w: { hash: 'h'.repeat(64), key: 'LEGACY-KEY' },
+    });
+    await run();
+    assert.ok(readFileSync(file, 'utf8').includes('data-ee-key="LEGACY-KEY"'));
   });
 });
