@@ -39,6 +39,7 @@ import {
 import { computeDirectoryHash, loadCache, saveCache } from './content-hash.js';
 import { findHtmlFiles, transformHtml } from './html.js';
 import { deploySite } from './deploy.js';
+import { storeWorkload } from './upload.js';
 
 const DEFAULT_CDN_URL = 'https://cdn.3dge.app';
 
@@ -135,6 +136,14 @@ export default function eeCdn(options = {}) {
       'astro:build:start': async ({ logger }) => {
         if (workloads.length === 0) return;
 
+        // Gated on a deploy target, matching the site-level guard in
+        // astro:build:done and the README, which says omitting `deploy` builds
+        // and validates without publishing. This asked only whether uploading
+        // was enabled, so a config with workloads and no deploy target
+        // published every sub-workload anyway -- and demanded a token to do it
+        // -- which is the one thing the caller had asked not to happen.
+        const willUpload = upload && !dryRun && Boolean(deploy?.domain);
+
         const bin = await builderBin(logger);
         const built = {};
 
@@ -148,14 +157,33 @@ export default function eeCdn(options = {}) {
 
           const level = workload.level ?? 0;
           const contentHash = computeDirectoryHash(src);
-          const cacheKey = `${workload.name}:${contentHash}`;
+          // The level is part of a build's identity, not a property of it: the
+          // same bytes at Level 1 and Level 2 are different .ee files. Keying
+          // on name and content alone let a Level 1 entry satisfy a Level 2
+          // build -- same name, same bytes, and `hit.key` present from the
+          // Level 1 run -- so the build was skipped, the upload with it, and
+          // the secret this PR exists to register was never sent. The cache
+          // quietly reproduced the bug the rest of the change fixes.
+          const cacheKey = `${workload.name}:level${level}:${contentHash}`;
           const hit = cache[cacheKey];
 
           // Reuse the previous build when the source is byte-identical, so a
-          // Level 1 workload keeps a stable key across deploys.
-          if (hit?.hash && (level === 0 || hit.key)) {
+          // Level 1 workload keeps a stable key across deploys. Only Level 1
+          // has a key to preserve; asking for one at Level 2 would mean never
+          // reusing anything, since Level 2 no longer stores one.
+          //
+          // A hit also has to have been uploaded. The .ee is deleted after each
+          // build, so a hit has nothing left to send -- and reusing one that was
+          // only ever built locally (a dry run, or an earlier build that did not
+          // upload) skips the one upload that would have registered the secret.
+          const reusable = hit?.hash && (level !== 1 || hit.key);
+          if (reusable && (!willUpload || hit.uploaded)) {
             logger.info(`${workload.name}: unchanged, reusing ${hit.hash.slice(0, 16)}…`);
-            built[workload.name] = { hash: hit.hash, key: hit.key ?? undefined };
+            built[workload.name] = {
+              hash: hit.hash,
+              level,
+              key: hit.key ?? undefined,
+            };
             continue;
           }
 
@@ -169,11 +197,18 @@ export default function eeCdn(options = {}) {
             );
           }
 
-          const entry = { hash: result.hash };
-          if (level >= 1) entry.key = toKey(result.secret, result.salt);
+          // Level 1 only. Level 1 is client-side decryption: the key belongs
+          // to whoever holds the page and must never reach a server. Level 2 is
+          // the opposite arrangement -- the control plane holds the secret and
+          // issues short-lived, revocable access tokens per request -- so
+          // deriving a key here at all is what defeated it: html.js writes any
+          // key it is given into the markup, handing the browser the long-lived
+          // material the gateway model exists to withhold (#262).
+          const entry = { hash: result.hash, level };
+          if (level === 1) entry.key = toKey(result.secret, result.salt);
           built[workload.name] = entry;
 
-          if (upload && !dryRun) {
+          if (willUpload) {
             await storeWorkload({
               filePath: out,
               hash: result.hash,
@@ -187,13 +222,18 @@ export default function eeCdn(options = {}) {
                 orgId: deploy?.orgId,
                 buildId: deploy?.buildId,
               },
+              // Level 2 only -- see secretHeader in upload.js. Without this the
+              // control plane stores ciphertext it holds no key for.
+              secret: level === 2 ? result.secret : null,
               logger,
             });
           }
 
           cache[cacheKey] = {
             hash: entry.hash,
+            level,
             key: entry.key ?? null,
+            uploaded: willUpload,
             builtAt: new Date().toISOString(),
           };
           rmSync(out, { force: true });

@@ -94,6 +94,21 @@ export async function deploySite({
   const result = runBuilder(bin, { src, out, level });
   logger.info(`Content hash ${result.hash}`);
 
+  // runBuilder reads the secret and salt out of ee-builder's stdout, and
+  // returns null for either if the line is missing or the format shifts. At
+  // Level 2 that silently produces an upload with no secret header -- the exact
+  // "green upload, undecryptable workload" this change exists to stop, arrived
+  // at from a different direction. At Level 1 it means no key to hand the
+  // browser. astro.js has always refused to continue here; this path never did.
+  if (level >= 1 && (!result.secret || !result.salt)) {
+    rmSync(out, { force: true });
+    throw new Error(
+      `ee-builder returned no secret/salt for a Level ${level} workload. ` +
+        'Refusing to upload: the content would be stored encrypted with no ' +
+        'way to decrypt it.',
+    );
+  }
+
   if (dryRun) {
     logger.info(`Dry run — not uploading. Workload left at ${out}`);
     return { ...result, uploaded: false, workloadPath: out };
@@ -123,6 +138,10 @@ export async function deploySite({
       controlPlane,
       token,
       params,
+      // Level 2 only -- see secretHeader in upload.js. This path forwarded no
+      // secret material at all, so a `level: 2` site deploy uploaded ciphertext
+      // the edge could never decrypt (#262).
+      secret: level === 2 ? result.secret : null,
       logger,
     });
   } finally {
