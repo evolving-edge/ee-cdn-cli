@@ -37,17 +37,29 @@ function rehypeInjectEE(workloads, defaultWorkload, sdkUrl) {
       const workload = workloads[name];
       if (!workload) return;
       node.properties.dataEeWorkload = workload.hash;
-      // Level 1 only, and checked here as well as at the point the key is
-      // derived. The producer is now correct, but this is the step that puts
-      // material into markup we ship, so it enforces the rule rather than
-      // trusting its input: a Level 2 key reaching the page would silently undo
-      // the gateway model, and nothing downstream would report it (#262).
+      // Level 1 only, and decided here as well as at the point the key is
+      // derived. This is the step that puts material into markup we ship, so it
+      // enforces the rule rather than trusting its input: a Level 2 key
+      // reaching the page would silently undo the gateway model, and nothing
+      // downstream would report it (#262).
+      //
+      // Enforcing means removing, not merely declining to add. Suppressing the
+      // assignment still leaves any data-ee-key that was already on the element
+      // -- one an author copied from an example, or one this function wrote on
+      // an earlier pass before the workload moved to Level 2 -- and that
+      // attribute is exactly as readable to a browser as one we put there. The
+      // first version of this guard only skipped the write, so it enforced the
+      // rule for keys it produced and not for keys it inherited.
       //
       // `level` is absent on entries written by older builds; those only ever
       // carried a key for Level 1, so treating unknown as Level 1 keeps them
       // working without letting a Level 2 key through.
       const level = workload.level ?? 1;
-      if (workload.key && level === 1) node.properties.dataEeKey = workload.key;
+      if (workload.key && level === 1) {
+        node.properties.dataEeKey = workload.key;
+      } else {
+        delete node.properties.dataEeKey;
+      }
     });
 
     if (!found || !sdkUrl) return;

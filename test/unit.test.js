@@ -150,6 +150,41 @@ describe('key embedding by encryption level (#262)', () => {
     assert.ok(out.includes('data-ee-key="LEVEL-1-KEY"'), 'Level 1 key belongs in the page');
   });
 
+  // Suppressing the write is not the same as enforcing the rule. A key already
+  // on the element -- copied from an example, or written by this function on an
+  // earlier pass before the workload moved to Level 2 -- is exactly as readable
+  // to a browser as one we put there, and the first version of this guard left
+  // it untouched.
+  it('removes a data-ee-key that was already on a Level 2 element', async () => {
+    const file = join(htmlDir, 'stale.html');
+    writeFileSync(
+      file,
+      '<html><body>' +
+        '<img data-ee="/a.svg" data-ee-workload="w" data-ee-key="STALE-KEY" />' +
+        '</body></html>',
+    );
+    await transformHtml(file, { w: { hash: 'h'.repeat(64), level: 2 } }, 'w', null);
+    const out = readFileSync(file, 'utf8');
+    assert.ok(!out.includes('STALE-KEY'), 'an inherited Level 2 key must be removed, not merely not-added');
+    assert.ok(!out.includes('data-ee-key'), 'no data-ee-key attribute survives at Level 2');
+  });
+
+  // The same removal must not eat a legitimate Level 1 key that the element
+  // already carried and that we are about to rewrite anyway.
+  it('still ends up with the correct key when Level 1 markup already had one', async () => {
+    const file = join(htmlDir, 'l1-existing.html');
+    writeFileSync(
+      file,
+      '<html><body>' +
+        '<img data-ee="/a.svg" data-ee-workload="w" data-ee-key="OLD-KEY" />' +
+        '</body></html>',
+    );
+    await transformHtml(file, { w: { hash: 'h'.repeat(64), level: 1, key: 'NEW-KEY' } }, 'w', null);
+    const out = readFileSync(file, 'utf8');
+    assert.ok(out.includes('data-ee-key="NEW-KEY"'), 'Level 1 key is rewritten');
+    assert.ok(!out.includes('OLD-KEY'), 'and the previous one is gone');
+  });
+
   // Entries written by an older build carry no `level`. Those only ever had a
   // key at Level 1, so the absent field must not silently drop it.
   it('treats a missing level as Level 1 for backward compatibility', async () => {
