@@ -15,7 +15,7 @@ Works with anything that emits a directory — Hugo, Eleventy, Jekyll, Zola,
 Publii, hand-written HTML.
 
 ```bash
-npx @evolving-edge/cdn-cli ./public --domain blog.example.com --project proj_abc
+npx @evolving-edge/ee-cdn-cli ./public --domain blog.example.com --project proj_abc
 ```
 
 ```
@@ -37,13 +37,13 @@ point `ee-deploy` at that folder.
 ## Astro
 
 ```bash
-npm install -D @evolving-edge/cdn-cli
+npm install -D @evolving-edge/ee-cdn-cli
 ```
 
 ```js
 // astro.config.mjs
 import { defineConfig } from 'astro/config';
-import eeCdn from '@evolving-edge/cdn-cli/astro';
+import eeCdn from '@evolving-edge/ee-cdn-cli/astro';
 
 export default defineConfig({
   site: 'https://blog.example.com',

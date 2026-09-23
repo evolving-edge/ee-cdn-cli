@@ -1,17 +1,17 @@
 {
-  "name": "@evolving-edge/cdn-cli",
+  "name": "@evolving-edge/ee-cdn-cli",
   "version": "0.1.0",
   "description": "Publish a static site to the Evolving Edge CDN \u2014 a CLI for any generator, plus an Astro integration.",
   "type": "module",
   "license": "MIT",
   "author": "Evolving Edge",
-  "homepage": "https://github.com/evolving-edge/cdn-cli#readme",
+  "homepage": "https://github.com/evolving-edge/ee-cdn-cli#readme",
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/evolving-edge/cdn-cli.git"
+    "url": "git+https://github.com/evolving-edge/ee-cdn-cli.git"
   },
   "bugs": {
-    "url": "https://github.com/evolving-edge/cdn-cli/issues"
+    "url": "https://github.com/evolving-edge/ee-cdn-cli/issues"
   },
   "keywords": [
     "cdn",
