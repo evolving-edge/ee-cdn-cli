@@ -1,4 +1,4 @@
-# @evolving-edge/cdn-cli
+# @evolving-edge/ee-cdn-cli
 
 Publish a static site to the [Evolving Edge](https://www.evolvingedge.ai) CDN.
 
