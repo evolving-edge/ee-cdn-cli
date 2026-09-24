@@ -168,10 +168,54 @@ jobs:
       # package and falls back to NODE_AUTH_TOKEN when it does not, so this one
       # step covers both the bootstrap and every release after it.
       - name: Publish
+        id: publish
         if: steps.check.outputs.needed == 'true'
         run: npm publish
         env:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+
+      # npm reports "you may not write here" as a 404 on PUT, not a 403, so it
+      # does not leak whether a name exists. The cost is that a permissions
+      # problem is indistinguishable from a missing package by reading the
+      # error, and the obvious next guess -- that the token was never wired up
+      # -- is wrong whenever GitHub masked it in the step env.
+      #
+      # So when a publish fails, ask npm who the credential actually is. All of
+      # this prints an account name and a package list; none of it can print
+      # the token.
+      - name: Explain the failure
+        if: always() && steps.publish.outcome == 'failure'
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+        run: |
+          # An empty answer is itself a signal -- a scoped token sees no packages --
+          # so render it as words rather than a blank cell.
+          ask() { local out; out="$("$@" 2>&1 | head -5 | tr '\n' ' ')"; printf '%s' "${out:-(no answer)}"; }
+
+          {
+            echo "### Publish failed — what the credential can actually do"
+            echo
+            echo "npm answers \"no write access to this scope\" with a 404 on PUT rather than a 403,"
+            echo "so the error above does not distinguish a missing package from a token that may"
+            echo "not create one. These do."
+            echo
+            echo '| Question | Answer |'
+            echo '|---|---|'
+            echo "| Which account is this token? | \`$(ask npm whoami)\` |"
+            echo "| Packages it can reach under the scope | \`$(ask npm access list packages @evolving-edge)\` |"
+            echo "| Org membership | \`$(ask npm org ls evolving-edge)\` |"
+            echo
+            echo "**If the account is right but the package list is empty or does not include this"
+            echo "name:** the token is a granular token scoped to *selected packages*, which cannot"
+            echo "create a name that does not exist yet — there was nothing to select when it was"
+            echo "issued. Reissue it with read+write on **all packages** in the \`evolving-edge\`"
+            echo "org, or publish \`0.1.0\` once by hand and let trusted publishing take over."
+            echo
+            echo "**If \`npm whoami\` failed outright:** the token is invalid, expired, or revoked."
+            echo
+            echo "**If the account is not a member of the org:** add it, or issue the token from an"
+            echo "account that is."
+          } >> "$GITHUB_STEP_SUMMARY"
 
       - name: Summary
         run: |
