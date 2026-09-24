@@ -1,53 +1,191 @@
-# Publishes @evolving-edge/ee-cdn-cli to npm on a version tag.
+# Publishes @evolving-edge/ee-cdn-cli to npm.
 #
-# There is deliberately no NPM_TOKEN. This uses npm trusted publishing: GitHub
-# mints a short-lived OIDC token that npm verifies against a publisher
-# configured on npmjs.com (org `evolving-edge`, repo `cdn-cli`, workflow
-# `publish.yml`). Nothing long-lived exists to leak, and nobody's personal
-# credentials are in the release path — so a maintainer leaving does not
-# strand the package.
+# The trigger is a merge to main carrying a package.json version that is not on
+# the registry yet. Bumping the version in a PR is therefore the entire release
+# ritual: merge it and that version ships. Every other push to main is a no-op,
+# so this is safe to leave running on all of them.
 #
-# One-time setup on npmjs.com, by an owner of the @evolving-edge org:
-#   Package settings -> Trusted publishers -> Add
-#     Organization:      evolving-edge
-#     Repository:        cdn-cli
-#     Workflow filename: publish.yml
-#     Allowed actions:   npm publish
+# package.json is the single source of truth. The previous version of this file
+# was driven by a `v*` tag and checked the tag against package.json, which meant
+# two sources of truth and a workflow_dispatch that could never succeed --
+# dispatching from a branch gave GITHUB_REF_NAME=main, which by definition does
+# not equal a version number.
 #
-# Keep at least two people with the `owner` role on the npm org. That, not the
-# token strategy, is what actually fixes the bus factor.
+# ---------------------------------------------------------------------------
+# AUTHENTICATION: npm trusted publishing (OIDC). There is no NPM_TOKEN here.
+# GitHub mints a short-lived token that npm verifies against a trusted publisher
+# configured on npmjs.com. Nothing long-lived exists to leak, and no
+# maintainer's personal credentials sit in the release path.
+#
+# THE FIRST PUBLISH CANNOT USE OIDC, and this is the part that bites. npm
+# configures trusted publishers in a *package's* settings, and a package that
+# has never been published has no settings page -- so OIDC can publish to a
+# package that exists, but cannot create one. (npm/cli#8544; PyPI allows
+# pre-registration, npm does not.)
+#
+# The NPM_TOKEN secret exists to cover exactly that gap and nothing else. npm
+# prefers OIDC whenever the registry reports a trusted publisher for the
+# package, and falls back to the token otherwise -- so the token carries the
+# first publish, OIDC takes over for every one after it, and the token can
+# then be revoked. Until it is revoked it is a long-lived credential sitting
+# in the release path, which is the thing trusted publishing exists to remove:
+# treat it as temporary, not as the design.
+#
+# After the first successful run, on npmjs.com, under
+# @evolving-edge/ee-cdn-cli -> Settings -> Trusted
+# publishers -> Add:
+#
+#     Organization or user:  evolving-edge
+#     Repository:            ee-cdn-cli      <- the repo's CURRENT name
+#     Workflow filename:     publish.yml
+#     Environment:           (leave empty)
+#
+# Get any of those four wrong and npm rejects the OIDC claim as a 404 "package
+# not found", which reads as though the package is missing rather than as an
+# auth failure. The repository field is the easy one to get wrong: this repo was
+# renamed from `cdn-cli` to `ee-cdn-cli`, and the instructions that used to live
+# in this comment still said the old name.
+#
+# PROVENANCE is not generated, because npm does not produce provenance
+# statements for sources in a private repository -- not even for a public
+# package. Nothing here needs changing if this repo is ever made public;
+# provenance simply starts appearing.
+#
+# Keep at least two people holding `owner` on the npm org. That, not the token
+# strategy, is what actually fixes the bus factor.
+# ---------------------------------------------------------------------------
+
 name: Publish to npm
 
 on:
   push:
-    tags: ['v*']
+    branches: [main]
   workflow_dispatch:
 
 permissions:
   contents: read
-  id-token: write # required for OIDC
+  id-token: write # required for OIDC trusted publishing
+
+# Deliberately NO concurrency group. GitHub keeps only one running and one
+# pending run per group, so a third push evicts the pending one even with
+# cancel-in-progress: false -- and if the evicted run was the one carrying a
+# version bump, that version is silently never published. Letting every push
+# run means the worst case is two runs racing on the same version, where npm
+# rejects the loser with EPUBLISHCONFLICT. A red run that names the problem is
+# a better failure than a release that quietly never happened.
 
 jobs:
   publish:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
 
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v5
         with:
           node-version: '24' # trusted publishing needs node >=22.14 / npm >=11.5.1
           registry-url: 'https://registry.npmjs.org'
 
-      - run: npm ci
-      - run: npm test
-
-      - name: Fail if the tag does not match package.json
+      # workflow_dispatch lets a maintainer pick any branch, and the checkout
+      # above would then publish that branch's package.json -- shipping code
+      # that was never reviewed or merged. The trigger is kept because it is
+      # genuinely useful for re-running after the bootstrap below, but it is
+      # main or nothing.
+      - name: Refuse to publish from anywhere but main
         run: |
-          TAG="${GITHUB_REF_NAME#v}"
-          PKG="$(node -p "require('./package.json').version")"
-          if [ "$TAG" != "$PKG" ]; then
-            echo "Tag $TAG does not match package.json version $PKG" >&2
+          if [ "$GITHUB_REF" != "refs/heads/main" ]; then
+            echo "::error::Refusing to publish from $GITHUB_REF — releases come from main only."
             exit 1
           fi
 
-      - run: npm publish
+      - run: npm ci
+      - run: npm test
+
+      # Asking the registry, rather than diffing against the previous commit,
+      # means a re-run, a revert and a merge that touched nothing relevant all
+      # behave identically: if this version is already out there, stop.
+      - name: Decide whether this version needs publishing
+        id: check
+        env:
+          # Only whether a token exists, never the token itself.
+          HAS_TOKEN: ${{ secrets.NPM_TOKEN != '' }}
+        run: |
+          NAME="$(node -p "require('./package.json').name")"
+          VERSION="$(node -p "require('./package.json').version")"
+          echo "name=$NAME" >> "$GITHUB_OUTPUT"
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+
+          # 0 if the spec exists, 1 if the registry actually says 404, and the
+          # job fails on anything else. Treating every npm view failure as
+          # "never published" would turn a DNS blip or a registry outage into
+          # advice to hand-publish a package that already exists.
+          exists() {
+            local spec="$1" out
+            if out="$(npm view "$spec" version 2>&1)"; then
+              return 0
+            fi
+            if printf '%s' "$out" | grep -q 'code E404'; then
+              return 1
+            fi
+            echo "::error::npm view $spec failed for a reason other than a missing package."
+            printf '%s\n' "$out"
+            exit 1
+          }
+
+          if ! exists "$NAME"; then
+            if [ "$HAS_TOKEN" != "true" ]; then
+              {
+                echo "### Release path is not bootstrapped yet"
+                echo
+                echo "\`$NAME\` has never been published, so there is no package on npmjs.com"
+                echo "to hang a trusted publisher off, and OIDC cannot create one."
+                echo
+                echo "Either add an \`NPM_TOKEN\` secret with publish rights to the"
+                echo "\`evolving-edge\` org, or have an owner publish once by hand:"
+                echo
+                echo '```'
+                echo "npm login"
+                echo "npm publish"
+                echo '```'
+                echo
+                echo "then add the trusted publisher (repository \`ee-cdn-cli\`, workflow"
+                echo "\`publish.yml\`, no environment). Every publish after that is automatic."
+              } >> "$GITHUB_STEP_SUMMARY"
+              echo "::error::$NAME has never been published and no NPM_TOKEN is available. See the job summary."
+              exit 1
+            fi
+            echo "$NAME has never been published — this is the first publish, carried by NPM_TOKEN."
+            echo "needed=true" >> "$GITHUB_OUTPUT"
+            echo "first=true" >> "$GITHUB_OUTPUT"
+          elif exists "$NAME@$VERSION"; then
+            echo "$NAME@$VERSION is already on the registry — nothing to do."
+            echo "needed=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "$NAME@$VERSION is not on the registry — publishing."
+            echo "needed=true" >> "$GITHUB_OUTPUT"
+          fi
+
+      # npm uses OIDC when the registry reports a trusted publisher for this
+      # package and falls back to NODE_AUTH_TOKEN when it does not, so this one
+      # step covers both the bootstrap and every release after it.
+      - name: Publish
+        if: steps.check.outputs.needed == 'true'
+        run: npm publish
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+
+      - name: Summary
+        run: |
+          if [ "${{ steps.check.outputs.needed }}" = "true" ]; then
+            echo "Published \`${{ steps.check.outputs.name }}@${{ steps.check.outputs.version }}\`" >> "$GITHUB_STEP_SUMMARY"
+            if [ "${{ steps.check.outputs.first }}" = "true" ]; then
+              {
+                echo
+                echo "That was the **first** publish, so it used \`NPM_TOKEN\` rather than OIDC."
+                echo "Now add the trusted publisher on npmjs.com — organization \`evolving-edge\`,"
+                echo "repository \`ee-cdn-cli\`, workflow \`publish.yml\`, environment empty — and"
+                echo "then revoke \`NPM_TOKEN\`. Every release after that authenticates without it."
+              } >> "$GITHUB_STEP_SUMMARY"
+            fi
+          else
+            echo "No publish: \`${{ steps.check.outputs.name }}@${{ steps.check.outputs.version }}\` is already on the registry." >> "$GITHUB_STEP_SUMMARY"
+          fi
