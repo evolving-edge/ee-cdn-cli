@@ -21,13 +21,18 @@
 # configures trusted publishers in a *package's* settings, and a package that
 # has never been published has no settings page -- so OIDC can publish to a
 # package that exists, but cannot create one. (npm/cli#8544; PyPI allows
-# pre-registration, npm does not.) The bootstrap is one manual publish by an
-# owner of the npm org, from a clean checkout of this repo:
+# pre-registration, npm does not.)
 #
-#     npm login            # an owner of the `evolving-edge` npm org
-#     npm publish
+# The NPM_TOKEN secret exists to cover exactly that gap and nothing else. npm
+# prefers OIDC whenever the registry reports a trusted publisher for the
+# package, and falls back to the token otherwise -- so the token carries the
+# first publish, OIDC takes over for every one after it, and the token can
+# then be revoked. Until it is revoked it is a long-lived credential sitting
+# in the release path, which is the thing trusted publishing exists to remove:
+# treat it as temporary, not as the design.
 #
-# Then on npmjs.com, under @evolving-edge/ee-cdn-cli -> Settings -> Trusted
+# After the first successful run, on npmjs.com, under
+# @evolving-edge/ee-cdn-cli -> Settings -> Trusted
 # publishers -> Add:
 #
 #     Organization or user:  evolving-edge
@@ -100,6 +105,9 @@ jobs:
       # behave identically: if this version is already out there, stop.
       - name: Decide whether this version needs publishing
         id: check
+        env:
+          # Only whether a token exists, never the token itself.
+          HAS_TOKEN: ${{ secrets.NPM_TOKEN != '' }}
         run: |
           NAME="$(node -p "require('./package.json').name")"
           VERSION="$(node -p "require('./package.json').version")"
@@ -124,27 +132,31 @@ jobs:
           }
 
           if ! exists "$NAME"; then
-            {
-              echo "### Release path is not bootstrapped yet"
-              echo
-              echo "\`$NAME\` has never been published, so there is no package on npmjs.com"
-              echo "to hang a trusted publisher off, and OIDC cannot create one."
-              echo
-              echo "An owner of the \`evolving-edge\` npm org needs to publish once by hand:"
-              echo
-              echo '```'
-              echo "npm login"
-              echo "npm publish"
-              echo '```'
-              echo
-              echo "then add the trusted publisher (repository \`ee-cdn-cli\`, workflow"
-              echo "\`publish.yml\`, no environment). Every publish after that is automatic."
-            } >> "$GITHUB_STEP_SUMMARY"
-            echo "::error::$NAME has never been published; the first publish must be done manually. See the job summary."
-            exit 1
-          fi
-
-          if exists "$NAME@$VERSION"; then
+            if [ "$HAS_TOKEN" != "true" ]; then
+              {
+                echo "### Release path is not bootstrapped yet"
+                echo
+                echo "\`$NAME\` has never been published, so there is no package on npmjs.com"
+                echo "to hang a trusted publisher off, and OIDC cannot create one."
+                echo
+                echo "Either add an \`NPM_TOKEN\` secret with publish rights to the"
+                echo "\`evolving-edge\` org, or have an owner publish once by hand:"
+                echo
+                echo '```'
+                echo "npm login"
+                echo "npm publish"
+                echo '```'
+                echo
+                echo "then add the trusted publisher (repository \`ee-cdn-cli\`, workflow"
+                echo "\`publish.yml\`, no environment). Every publish after that is automatic."
+              } >> "$GITHUB_STEP_SUMMARY"
+              echo "::error::$NAME has never been published and no NPM_TOKEN is available. See the job summary."
+              exit 1
+            fi
+            echo "$NAME has never been published — this is the first publish, carried by NPM_TOKEN."
+            echo "needed=true" >> "$GITHUB_OUTPUT"
+            echo "first=true" >> "$GITHUB_OUTPUT"
+          elif exists "$NAME@$VERSION"; then
             echo "$NAME@$VERSION is already on the registry — nothing to do."
             echo "needed=false" >> "$GITHUB_OUTPUT"
           else
@@ -152,14 +164,28 @@ jobs:
             echo "needed=true" >> "$GITHUB_OUTPUT"
           fi
 
+      # npm uses OIDC when the registry reports a trusted publisher for this
+      # package and falls back to NODE_AUTH_TOKEN when it does not, so this one
+      # step covers both the bootstrap and every release after it.
       - name: Publish
         if: steps.check.outputs.needed == 'true'
         run: npm publish
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
 
       - name: Summary
         run: |
           if [ "${{ steps.check.outputs.needed }}" = "true" ]; then
             echo "Published \`${{ steps.check.outputs.name }}@${{ steps.check.outputs.version }}\`" >> "$GITHUB_STEP_SUMMARY"
+            if [ "${{ steps.check.outputs.first }}" = "true" ]; then
+              {
+                echo
+                echo "That was the **first** publish, so it used \`NPM_TOKEN\` rather than OIDC."
+                echo "Now add the trusted publisher on npmjs.com — organization \`evolving-edge\`,"
+                echo "repository \`ee-cdn-cli\`, workflow \`publish.yml\`, environment empty — and"
+                echo "then revoke \`NPM_TOKEN\`. Every release after that authenticates without it."
+              } >> "$GITHUB_STEP_SUMMARY"
+            fi
           else
             echo "No publish: \`${{ steps.check.outputs.name }}@${{ steps.check.outputs.version }}\` is already on the registry." >> "$GITHUB_STEP_SUMMARY"
           fi
