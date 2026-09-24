@@ -167,14 +167,15 @@ These are properties of the CDN, not of this package:
 
 ## Releasing
 
-Publishing is done by CI via npm trusted publishing — there is no `NPM_TOKEN`
-anywhere. Tag a version and push:
+Bump the version in a pull request. When it merges to `main`, CI publishes that version and stops. Any other merge is a no-op, because the workflow asks the registry whether the version in `package.json` is already there.
 
 ```bash
-npm version minor && git push --follow-tags
+npm version minor --no-git-tag-version   # then commit, PR, merge
 ```
 
-See `.github/workflows/publish.yml` for the one-time npmjs.com setup.
+Publishing uses npm trusted publishing (OIDC) — there is no `NPM_TOKEN` anywhere.
+
+**The first publish of a new package cannot use OIDC.** npm hangs trusted publishers off a package's settings page, and a package that has never been published does not have one, so OIDC can publish to a package but cannot create one. An owner of the `evolving-edge` npm org publishes once by hand (`npm login && npm publish`), adds the trusted publisher, and every release after that is automatic. `.github/workflows/publish.yml` carries the exact field values, and CI fails with those instructions in the job summary if it runs before the bootstrap is done.
 
 ## License
 
