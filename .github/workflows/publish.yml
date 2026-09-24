@@ -61,10 +61,13 @@ permissions:
   contents: read
   id-token: write # required for OIDC trusted publishing
 
-# Two merges landing close together must not race to publish the same version.
-concurrency:
-  group: publish-npm
-  cancel-in-progress: false
+# Deliberately NO concurrency group. GitHub keeps only one running and one
+# pending run per group, so a third push evicts the pending one even with
+# cancel-in-progress: false -- and if the evicted run was the one carrying a
+# version bump, that version is silently never published. Letting every push
+# run means the worst case is two runs racing on the same version, where npm
+# rejects the loser with EPUBLISHCONFLICT. A red run that names the problem is
+# a better failure than a release that quietly never happened.
 
 jobs:
   publish:
@@ -76,6 +79,18 @@ jobs:
         with:
           node-version: '24' # trusted publishing needs node >=22.14 / npm >=11.5.1
           registry-url: 'https://registry.npmjs.org'
+
+      # workflow_dispatch lets a maintainer pick any branch, and the checkout
+      # above would then publish that branch's package.json -- shipping code
+      # that was never reviewed or merged. The trigger is kept because it is
+      # genuinely useful for re-running after the bootstrap below, but it is
+      # main or nothing.
+      - name: Refuse to publish from anywhere but main
+        run: |
+          if [ "$GITHUB_REF" != "refs/heads/main" ]; then
+            echo "::error::Refusing to publish from $GITHUB_REF — releases come from main only."
+            exit 1
+          fi
 
       - run: npm ci
       - run: npm test
@@ -91,7 +106,24 @@ jobs:
           echo "name=$NAME" >> "$GITHUB_OUTPUT"
           echo "version=$VERSION" >> "$GITHUB_OUTPUT"
 
-          if ! npm view "$NAME" version >/dev/null 2>&1; then
+          # 0 if the spec exists, 1 if the registry actually says 404, and the
+          # job fails on anything else. Treating every npm view failure as
+          # "never published" would turn a DNS blip or a registry outage into
+          # advice to hand-publish a package that already exists.
+          exists() {
+            local spec="$1" out
+            if out="$(npm view "$spec" version 2>&1)"; then
+              return 0
+            fi
+            if printf '%s' "$out" | grep -q 'code E404'; then
+              return 1
+            fi
+            echo "::error::npm view $spec failed for a reason other than a missing package."
+            printf '%s\n' "$out"
+            exit 1
+          }
+
+          if ! exists "$NAME"; then
             {
               echo "### Release path is not bootstrapped yet"
               echo
@@ -112,7 +144,7 @@ jobs:
             exit 1
           fi
 
-          if npm view "$NAME@$VERSION" version >/dev/null 2>&1; then
+          if exists "$NAME@$VERSION"; then
             echo "$NAME@$VERSION is already on the registry — nothing to do."
             echo "needed=false" >> "$GITHUB_OUTPUT"
           else
