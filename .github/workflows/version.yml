@@ -1,0 +1,59 @@
+# Opens and maintains the "Version Packages" pull request.
+#
+# The split matters. THIS workflow decides the version number and writes the
+# changelog; publish.yml ships whatever lands on main. Nothing here touches npm
+# and nothing here holds a credential.
+#
+# How a release happens:
+#   1. A PR that changes behaviour also adds a changeset (`npm run changeset`)
+#      saying whether it is major, minor or patch, and why, in a sentence
+#      written for someone installing the package.
+#   2. Merging it makes this workflow open or update a "Version Packages" PR
+#      that applies every pending changeset: bumps package.json and writes
+#      CHANGELOG.md.
+#   3. Merging THAT is the release. publish.yml sees a version the registry
+#      does not have and ships it.
+#
+# So the version number is reviewed as a diff before it exists, rather than
+# typed into package.json by whoever remembered. Nothing forces a changeset --
+# a docs-only PR should not need one, and a release with none is a no-op.
+name: Version
+
+on:
+  push:
+    branches: [main]
+
+permissions:
+  contents: write
+  pull-requests: write
+
+# A second merge while the Version PR is being updated must not race it.
+concurrency:
+  group: changesets-version
+  cancel-in-progress: false
+
+jobs:
+  version:
+    name: Maintain the Version Packages PR
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          fetch-depth: 0
+
+      - uses: actions/setup-node@v5
+        with:
+          node-version: '24'
+
+      - run: npm ci
+
+      # Opens the PR when changesets are pending, updates it when more arrive,
+      # and closes it when there are none. It does NOT publish: no `publish`
+      # input, so this job needs no npm credential at all.
+      - uses: changesets/action@v1
+        with:
+          version: npm run version
+          title: "Release: version packages"
+          commit: "Version packages"
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

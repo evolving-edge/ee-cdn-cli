@@ -1,15 +1,16 @@
-# Publishes @evolving-edge/ee-cdn-cli to npm.
+# Ships whatever version lands on main, if the registry does not have it yet.
 #
-# The trigger is a merge to main carrying a package.json version that is not on
-# the registry yet. Bumping the version in a PR is therefore the entire release
-# ritual: merge it and that version ships. Every other push to main is a no-op,
-# so this is safe to leave running on all of them.
+# It does NOT decide the version. version.yml and Changesets do that: each PR
+# carries a changeset, and merging the "Version Packages" PR is what bumps
+# package.json and writes CHANGELOG.md. Merging that PR is therefore the
+# release, and this workflow is what carries it out. Every other push to main
+# is a no-op, because the decision is made by asking the registry rather than
+# by diffing the previous commit -- so a re-run, a revert and an unrelated
+# merge all behave the same.
 #
-# package.json is the single source of truth. The previous version of this file
-# was driven by a `v*` tag and checked the tag against package.json, which meant
-# two sources of truth and a workflow_dispatch that could never succeed --
-# dispatching from a branch gave GITHUB_REF_NAME=main, which by definition does
-# not equal a version number.
+# WHETHER IT PUBLISHES OR STAGES DEPENDS ON THE TRUSTED PUBLISHER, and the run
+# summary says which happened rather than leaving green to be read as shipped.
+# See the step below.
 #
 # ---------------------------------------------------------------------------
 # AUTHENTICATION: npm trusted publishing (OIDC). There is no token. GitHub
@@ -123,7 +124,6 @@ jobs:
             echo "::error::$NAME reports as unpublished, which should be impossible — refusing to guess. See the npm output above."
             exit 1
           elif exists "$NAME@$VERSION"; then
-          elif exists "$NAME@$VERSION"; then
             echo "$NAME@$VERSION is already on the registry — nothing to do."
             echo "needed=false" >> "$GITHUB_OUTPUT"
           else
@@ -131,26 +131,38 @@ jobs:
             echo "needed=true" >> "$GITHUB_OUTPUT"
           fi
 
-      # `npm stage publish`, not `npm publish`, and not as a fallback -- it is
-      # the only action this package's trusted publisher permits, and staging
-      # is permitted by EVERY trusted publisher by default. Direct publish is a
-      # separate, unticked box, so a workflow that calls `npm publish` works
-      # only where somebody ticked it and fails with
-      # "403 OIDC permission denied for this action" everywhere else. That is
-      # what happened here: the publisher was configured correctly and the
-      # denial was about the verb, not the identity.
+      # Publish if the trusted publisher allows it, stage if it does not.
       #
-      # Staging is also the direction npm is pushing, and the reason is sound:
-      # a human approves each version before it is downloadable, so a
-      # compromised workflow cannot push straight to the registry.
+      # Allowed actions on a trusted publisher default to staging only, and
+      # direct `npm publish` is a separate, unticked box. So a workflow hard-
+      # coded to `npm publish` fails with "403 OIDC permission denied for this
+      # action" on a default configuration -- npm matched the identity and
+      # refused the verb -- and a workflow hard-coded to `npm stage publish`
+      # leaves a manual approval in the path forever, even after somebody
+      # ticks the box.
       #
-      # No NODE_AUTH_TOKEN. The package exists and a trusted publisher is
-      # configured, so OIDC carries this on its own -- the token was only ever
-      # the bootstrap for the first publish and can now be revoked.
-      - name: Stage the release
+      # Trying publish first and falling back is what makes this correct under
+      # both configurations, and makes ticking the box the ONLY thing needed to
+      # go fully automatic -- no code change, no second PR. The fallback is
+      # narrow on purpose: only a 403 naming this action falls through. Every
+      # other failure, including a 403 for any other reason, fails the job.
+      - name: Publish, or stage if that is all the publisher permits
         id: publish
         if: steps.check.outputs.needed == 'true'
-        run: npm stage publish
+        run: |
+          set -o pipefail
+          if npm publish 2>&1 | tee /tmp/publish.log; then
+            echo "mode=published" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          if grep -q 'permission denied for this action' /tmp/publish.log; then
+            echo "::notice::Trusted publisher does not allow direct publish; staging instead."
+            npm stage publish
+            echo "mode=staged" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          echo "::error::npm publish failed for a reason other than the allowed-actions setting."
+          exit 1
 
       # A publish failure on npm is almost never what the error text says, so
       # this branches on the code rather than asserting the likeliest cause.
@@ -220,13 +232,19 @@ jobs:
         run: |
           NAME="${{ steps.check.outputs.name }}"
           VERSION="${{ steps.check.outputs.version }}"
-          if [ "${{ steps.check.outputs.needed }}" = "true" ]; then
+          MODE="${{ steps.publish.outputs.mode }}"
+          if [ "${{ steps.check.outputs.needed }}" != "true" ]; then
+            echo "No release: \`$NAME@$VERSION\` is already on the registry." >> "$GITHUB_STEP_SUMMARY"
+          elif [ "$MODE" = "published" ]; then
+            echo "### Published \`$NAME@$VERSION\`" >> "$GITHUB_STEP_SUMMARY"
+            echo >> "$GITHUB_STEP_SUMMARY"
+            echo "Live on the registry and installable now." >> "$GITHUB_STEP_SUMMARY"
+          else
             {
-              echo "### Staged \`$NAME@$VERSION\` — not yet installable"
+              echo "### Staged \`$NAME@$VERSION\` — NOT installable yet"
               echo
-              echo "It is uploaded and waiting on a maintainer. **Nobody can \`npm install\` it"
-              echo "until somebody approves it**, which is the point of staging rather than an"
-              echo "oversight, so this run being green does not mean the version shipped."
+              echo "The trusted publisher permits staging but not direct publish, so this run"
+              echo "uploaded the version and stopped. **Green here does not mean shipped.**"
               echo
               echo "Approve it with 2FA:"
               echo
@@ -236,7 +254,9 @@ jobs:
               echo '```'
               echo
               echo "or at npmjs.com -> Staged Packages."
+              echo
+              echo "To make releases fully automatic, tick \`npm publish\` under **Allowed"
+              echo "actions** on the trusted publisher. No code change is needed -- this"
+              echo "workflow publishes directly whenever it is permitted to."
             } >> "$GITHUB_STEP_SUMMARY"
-          else
-            echo "No publish: \`$NAME@$VERSION\` is already on the registry." >> "$GITHUB_STEP_SUMMARY"
           fi
