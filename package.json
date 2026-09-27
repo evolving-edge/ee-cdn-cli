@@ -1,6 +1,6 @@
 {
   "name": "@evolving-edge/ee-cdn-cli",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "Publish a static site to the Evolving Edge CDN \u2014 a CLI for any generator, plus an Astro integration.",
   "type": "module",
   "license": "MIT",
