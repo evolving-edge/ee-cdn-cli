@@ -213,7 +213,16 @@ npm version minor --no-git-tag-version   # then commit, PR, merge
 
 Publishing uses npm trusted publishing (OIDC) — there is no `NPM_TOKEN` anywhere.
 
-**The first publish of a new package cannot use OIDC.** npm hangs trusted publishers off a package's settings page, and a package that has never been published does not have one, so OIDC can publish to a package but cannot create one. An owner of the `evolving-edge` npm org publishes once by hand (`npm login && npm publish`), adds the trusted publisher, and every release after that is automatic. `.github/workflows/publish.yml` carries the exact field values, and CI fails with those instructions in the job summary if it runs before the bootstrap is done.
+**A merge stages the version; it does not release it.** `npm stage publish` uploads the build and leaves it pending, so nobody can `npm install` the new version until a maintainer approves it with 2FA:
+
+```bash
+npm stage list @evolving-edge/ee-cdn-cli
+npm stage approve <stage-id>
+```
+
+or at npmjs.com → Staged Packages. A green publish run therefore means *staged*, not *shipped*.
+
+This is what the package's trusted publisher permits rather than a preference. Allowed actions default to staging only, and direct `npm publish` is a separate, unticked box — a workflow calling `npm publish` against a default configuration fails with `403 OIDC permission denied for this action`, which reads like an identity problem and is not. To make releases fully automatic, tick `npm publish` under Allowed actions and change the one step in `publish.yml` back.
 
 ## License
 
