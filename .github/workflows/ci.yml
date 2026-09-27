@@ -4,6 +4,47 @@ on:
   pull_request:
 
 jobs:
+  # Every `run:` block in every workflow has to parse as bash.
+  #
+  # A workflow's shell is invisible to every other check here: YAML validates,
+  # actionlint is not run, and the job itself only fails when it executes --
+  # which for a publish workflow means at release time, on main, with the
+  # version already bumped. A stray `elif` shipped exactly that way and was
+  # caught in review rather than by anything automated.
+  shell-syntax:
+    name: Workflow shell syntax
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - name: bash -n every run block
+        run: |
+          python3 - <<'PY'
+          import glob, subprocess, sys, tempfile, yaml
+          bad = 0
+          for path in sorted(glob.glob('.github/workflows/*.yml')):
+              doc = yaml.safe_load(open(path))
+              for job, spec in (doc.get('jobs') or {}).items():
+                  for i, step in enumerate(spec.get('steps') or []):
+                      script = step.get('run')
+                      if not script:
+                          continue
+                      # Only default-shell steps; a `shell:` override may not be bash.
+                      if step.get('shell') and step['shell'] not in ('bash', 'sh'):
+                          continue
+                      with tempfile.NamedTemporaryFile('w', suffix='.sh') as f:
+                          f.write('#!/usr/bin/env bash\n' + script)
+                          f.flush()
+                          r = subprocess.run(['bash', '-n', f.name], capture_output=True, text=True)
+                      if r.returncode:
+                          name = step.get('name') or step.get('run', '')[:40]
+                          print(f'{path} :: {job} :: step {i} ({name})')
+                          print(r.stderr.strip())
+                          bad += 1
+          print('OK — every run block parses' if not bad else f'{bad} step(s) do not parse')
+          sys.exit(1 if bad else 0)
+          PY
+
+
   test:
     runs-on: ubuntu-latest
     strategy:

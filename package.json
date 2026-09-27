@@ -40,6 +40,7 @@
     "src",
     "astro.d.ts",
     "README.md",
+    "CHANGELOG.md",
     "LICENSE"
   ],
   "engines": {
@@ -55,7 +56,9 @@
     "unist-util-visit": "^5.0.0"
   },
   "scripts": {
-    "test": "node --test"
+    "test": "node --test",
+    "changeset": "changeset",
+    "version": "changeset version"
   },
   "publishConfig": {
     "access": "public"
@@ -67,5 +70,8 @@
     "astro": {
       "optional": true
     }
+  },
+  "devDependencies": {
+    "@changesets/cli": "^3.0.3"
   }
 }

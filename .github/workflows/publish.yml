@@ -1,55 +1,39 @@
-# Publishes @evolving-edge/ee-cdn-cli to npm.
+# Ships whatever version lands on main, if the registry does not have it yet.
 #
-# The trigger is a merge to main carrying a package.json version that is not on
-# the registry yet. Bumping the version in a PR is therefore the entire release
-# ritual: merge it and that version ships. Every other push to main is a no-op,
-# so this is safe to leave running on all of them.
+# It does NOT decide the version. version.yml and Changesets do that: each PR
+# carries a changeset, and merging the "Version Packages" PR is what bumps
+# package.json and writes CHANGELOG.md. Merging that PR is therefore the
+# release, and this workflow is what carries it out. Every other push to main
+# is a no-op, because the decision is made by asking the registry rather than
+# by diffing the previous commit -- so a re-run, a revert and an unrelated
+# merge all behave the same.
 #
-# package.json is the single source of truth. The previous version of this file
-# was driven by a `v*` tag and checked the tag against package.json, which meant
-# two sources of truth and a workflow_dispatch that could never succeed --
-# dispatching from a branch gave GITHUB_REF_NAME=main, which by definition does
-# not equal a version number.
+# WHETHER IT PUBLISHES OR STAGES DEPENDS ON THE TRUSTED PUBLISHER, and the run
+# summary says which happened rather than leaving green to be read as shipped.
+# See the step below.
 #
 # ---------------------------------------------------------------------------
-# AUTHENTICATION: npm trusted publishing (OIDC). There is no NPM_TOKEN here.
-# GitHub mints a short-lived token that npm verifies against a trusted publisher
-# configured on npmjs.com. Nothing long-lived exists to leak, and no
-# maintainer's personal credentials sit in the release path.
+# AUTHENTICATION: npm trusted publishing (OIDC). There is no token. GitHub
+# mints a short-lived credential that npm verifies against the trusted
+# publisher configured for this package, so nothing long-lived exists to leak.
 #
-# THE FIRST PUBLISH CANNOT USE OIDC, and this is the part that bites. npm
-# configures trusted publishers in a *package's* settings, and a package that
-# has never been published has no settings page -- so OIDC can publish to a
-# package that exists, but cannot create one. (npm/cli#8544; PyPI allows
-# pre-registration, npm does not.)
+# THIS STAGES, IT DOES NOT PUBLISH. `npm stage publish` uploads the version and
+# leaves it pending until a maintainer approves it with 2FA, at npmjs.com ->
+# Staged Packages, or `npm stage approve <id>`. Until then it is not
+# installable.
 #
-# The NPM_TOKEN secret exists to cover exactly that gap and nothing else. npm
-# prefers OIDC whenever the registry reports a trusted publisher for the
-# package, and falls back to the token otherwise -- so the token carries the
-# first publish, OIDC takes over for every one after it, and the token can
-# then be revoked. Until it is revoked it is a long-lived credential sitting
-# in the release path, which is the thing trusted publishing exists to remove:
-# treat it as temporary, not as the design.
+# That is not a preference, it is what the trusted publisher permits. Allowed
+# actions on a trusted publisher default to staging only; direct `npm publish`
+# is a separate, unticked box. A workflow calling `npm publish` against a
+# default configuration fails with "403 OIDC permission denied for this
+# action", which reads like an identity problem and is not -- npm matched the
+# identity and refused the verb. Staging is permitted by every configuration,
+# so this cannot break that way again.
 #
-# After the first successful run, on npmjs.com, under
-# @evolving-edge/ee-cdn-cli -> Settings -> Trusted
-# publishers -> Add:
-#
-#     Organization or user:  evolving-edge
-#     Repository:            ee-cdn-cli      <- the repo's CURRENT name
-#     Workflow filename:     publish.yml
-#     Environment:           (leave empty)
-#
-# Get any of those four wrong and npm rejects the OIDC claim as a 404 "package
-# not found", which reads as though the package is missing rather than as an
-# auth failure. The repository field is the easy one to get wrong: this repo was
-# renamed from `cdn-cli` to `ee-cdn-cli`, and the instructions that used to live
-# in this comment still said the old name.
-#
-# PROVENANCE is not generated, because npm does not produce provenance
-# statements for sources in a private repository -- not even for a public
-# package. Nothing here needs changing if this repo is ever made public;
-# provenance simply starts appearing.
+# To make releases fully automatic instead: tick `npm publish` under Allowed
+# actions, and change the one step below back to `npm publish`. The trade is a
+# human approval per release against a workflow that can push straight to the
+# registry.
 #
 # Keep at least two people holding `owner` on the npm org. That, not the token
 # strategy, is what actually fixes the bus factor.
@@ -97,6 +81,12 @@ jobs:
             exit 1
           fi
 
+      # `npm stage` landed in npm 12; the Node 24 runner ships npm 11.
+      - name: Install an npm that has `npm stage`
+        run: |
+          npm install -g npm@^12
+          npm --version
+
       - run: npm ci
       - run: npm test
 
@@ -105,9 +95,6 @@ jobs:
       # behave identically: if this version is already out there, stop.
       - name: Decide whether this version needs publishing
         id: check
-        env:
-          # Only whether a token exists, never the token itself.
-          HAS_TOKEN: ${{ secrets.NPM_TOKEN != '' }}
         run: |
           NAME="$(node -p "require('./package.json').name")"
           VERSION="$(node -p "require('./package.json').version")"
@@ -132,30 +119,10 @@ jobs:
           }
 
           if ! exists "$NAME"; then
-            if [ "$HAS_TOKEN" != "true" ]; then
-              {
-                echo "### Release path is not bootstrapped yet"
-                echo
-                echo "\`$NAME\` has never been published, so there is no package on npmjs.com"
-                echo "to hang a trusted publisher off, and OIDC cannot create one."
-                echo
-                echo "Either add an \`NPM_TOKEN\` secret with publish rights to the"
-                echo "\`evolving-edge\` org, or have an owner publish once by hand:"
-                echo
-                echo '```'
-                echo "npm login"
-                echo "npm publish"
-                echo '```'
-                echo
-                echo "then add the trusted publisher (repository \`ee-cdn-cli\`, workflow"
-                echo "\`publish.yml\`, no environment). Every publish after that is automatic."
-              } >> "$GITHUB_STEP_SUMMARY"
-              echo "::error::$NAME has never been published and no NPM_TOKEN is available. See the job summary."
-              exit 1
-            fi
-            echo "$NAME has never been published — this is the first publish, carried by NPM_TOKEN."
-            echo "needed=true" >> "$GITHUB_OUTPUT"
-            echo "first=true" >> "$GITHUB_OUTPUT"
+            # Cannot happen now that the package exists, so treat it as the
+            # registry misbehaving rather than as a bootstrap to perform.
+            echo "::error::$NAME reports as unpublished, which should be impossible — refusing to guess. See the npm output above."
+            exit 1
           elif exists "$NAME@$VERSION"; then
             echo "$NAME@$VERSION is already on the registry — nothing to do."
             echo "needed=false" >> "$GITHUB_OUTPUT"
@@ -164,72 +131,132 @@ jobs:
             echo "needed=true" >> "$GITHUB_OUTPUT"
           fi
 
-      # npm uses OIDC when the registry reports a trusted publisher for this
-      # package and falls back to NODE_AUTH_TOKEN when it does not, so this one
-      # step covers both the bootstrap and every release after it.
-      - name: Publish
+      # Publish if the trusted publisher allows it, stage if it does not.
+      #
+      # Allowed actions on a trusted publisher default to staging only, and
+      # direct `npm publish` is a separate, unticked box. So a workflow hard-
+      # coded to `npm publish` fails with "403 OIDC permission denied for this
+      # action" on a default configuration -- npm matched the identity and
+      # refused the verb -- and a workflow hard-coded to `npm stage publish`
+      # leaves a manual approval in the path forever, even after somebody
+      # ticks the box.
+      #
+      # Trying publish first and falling back is what makes this correct under
+      # both configurations, and makes ticking the box the ONLY thing needed to
+      # go fully automatic -- no code change, no second PR. The fallback is
+      # narrow on purpose: only a 403 naming this action falls through. Every
+      # other failure, including a 403 for any other reason, fails the job.
+      - name: Publish, or stage if that is all the publisher permits
         id: publish
         if: steps.check.outputs.needed == 'true'
-        run: npm publish
-        env:
-          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+        run: |
+          set -o pipefail
+          if npm publish 2>&1 | tee /tmp/publish.log; then
+            echo "mode=published" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          if grep -q 'permission denied for this action' /tmp/publish.log; then
+            echo "::notice::Trusted publisher does not allow direct publish; staging instead."
+            npm stage publish
+            echo "mode=staged" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          echo "::error::npm publish failed for a reason other than the allowed-actions setting."
+          exit 1
 
-      # npm reports "you may not write here" as a 404 on PUT, not a 403, so it
-      # does not leak whether a name exists. The cost is that a permissions
-      # problem is indistinguishable from a missing package by reading the
-      # error, and the obvious next guess -- that the token was never wired up
-      # -- is wrong whenever GitHub masked it in the step env.
+      # A publish failure on npm is almost never what the error text says, so
+      # this branches on the code rather than asserting the likeliest cause.
       #
-      # So when a publish fails, ask npm who the credential actually is. All of
-      # this prints an account name and a package list; none of it can print
-      # the token.
+      # The previous version named ONE cause -- a token scoped to selected
+      # packages -- and stated it confidently. When this job actually failed the
+      # cause was a stage-only trusted publisher, and the token was not even in
+      # play, so the diagnosis sent the reader off to reissue a PAT that had
+      # nothing to do with it. A confident wrong answer costs more than none.
       - name: Explain the failure
         if: always() && steps.publish.outcome == 'failure'
-        env:
-          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
         run: |
-          # An empty answer is itself a signal -- a scoped token sees no packages --
-          # so render it as words rather than a blank cell.
-          ask() { local out; out="$("$@" 2>&1 | head -5 | tr '\n' ' ')"; printf '%s' "${out:-(no answer)}"; }
-
+          LOG="$(ls -t "$HOME"/.npm/_logs/*.log 2>/dev/null | head -1)"
+          ERR="$(grep -oE 'code (E[A-Z0-9]+)' "$LOG" 2>/dev/null | head -1 | awk '{print $2}')"
           {
-            echo "### Publish failed — what the credential can actually do"
+            echo "### Staging failed: \`${ERR:-unknown}\`"
             echo
-            echo "npm answers \"no write access to this scope\" with a 404 on PUT rather than a 403,"
-            echo "so the error above does not distinguish a missing package from a token that may"
-            echo "not create one. These do."
+            case "$ERR" in
+              E403)
+                echo "npm matched the OIDC identity and refused the **action**."
+                echo
+                echo "Every trusted publisher permits \`npm stage publish\` by default, so this"
+                echo "usually means the configuration no longer matches this workflow: check that"
+                echo "**Repository** is \`ee-cdn-cli\`, **Workflow** is \`publish.yml\` and"
+                echo "**Environment** is empty, under npmjs.com -> Packages -> the package ->"
+                echo "Settings -> Trusted publishing."
+                echo
+                echo "If it says \"permission denied for this action\" the verb is the problem,"
+                echo "not the identity -- confirm **Allowed actions** still lists \`npm stage publish\`."
+                ;;
+              E404)
+                echo "A 404 on a PUT is npm declining to say whether the package exists."
+                echo
+                echo "It means this credential may not write to the \`@evolving-edge\` scope. Under"
+                echo "OIDC that points at the trusted publisher; with a token it means the token is"
+                echo "scoped to selected packages and cannot create or update this one."
+                ;;
+              EPUBLISHCONFLICT|EEXIST)
+                echo "This version is already on the registry."
+                echo
+                echo "Two runs raced, or someone published by hand. Harmless -- bump the version in"
+                echo "\`package.json\` and merge again. Nothing was overwritten; npm does not allow it."
+                ;;
+              EOTP)
+                echo "npm asked for a one-time password, which CI cannot supply."
+                echo
+                echo "That means the run authenticated with a token rather than OIDC. Check that"
+                echo "\`id-token: write\` is still set on this job and the trusted publisher still exists."
+                ;;
+              ENEEDAUTH)
+                echo "No credential reached npm at all. Check \`id-token: write\` on this job."
+                ;;
+              *)
+                echo "Not a failure mode this step recognises, so here is the log rather than a guess."
+                ;;
+            esac
             echo
-            echo '| Question | Answer |'
-            echo '|---|---|'
-            echo "| Which account is this token? | \`$(ask npm whoami)\` |"
-            echo "| Packages it can reach under the scope | \`$(ask npm access list packages @evolving-edge)\` |"
-            echo "| Org membership | \`$(ask npm org ls evolving-edge)\` |"
+            echo "<details><summary>npm log</summary>"
             echo
-            echo "**If the account is right but the package list is empty or does not include this"
-            echo "name:** the token is a granular token scoped to *selected packages*, which cannot"
-            echo "create a name that does not exist yet — there was nothing to select when it was"
-            echo "issued. Reissue it with read+write on **all packages** in the \`evolving-edge\`"
-            echo "org, or publish \`0.1.0\` once by hand and let trusted publishing take over."
-            echo
-            echo "**If \`npm whoami\` failed outright:** the token is invalid, expired, or revoked."
-            echo
-            echo "**If the account is not a member of the org:** add it, or issue the token from an"
-            echo "account that is."
+            echo '```'
+            tail -40 "$LOG" 2>/dev/null || echo "(no npm log found)"
+            echo '```'
+            echo "</details>"
           } >> "$GITHUB_STEP_SUMMARY"
 
       - name: Summary
         run: |
-          if [ "${{ steps.check.outputs.needed }}" = "true" ]; then
-            echo "Published \`${{ steps.check.outputs.name }}@${{ steps.check.outputs.version }}\`" >> "$GITHUB_STEP_SUMMARY"
-            if [ "${{ steps.check.outputs.first }}" = "true" ]; then
-              {
-                echo
-                echo "That was the **first** publish, so it used \`NPM_TOKEN\` rather than OIDC."
-                echo "Now add the trusted publisher on npmjs.com — organization \`evolving-edge\`,"
-                echo "repository \`ee-cdn-cli\`, workflow \`publish.yml\`, environment empty — and"
-                echo "then revoke \`NPM_TOKEN\`. Every release after that authenticates without it."
-              } >> "$GITHUB_STEP_SUMMARY"
-            fi
+          NAME="${{ steps.check.outputs.name }}"
+          VERSION="${{ steps.check.outputs.version }}"
+          MODE="${{ steps.publish.outputs.mode }}"
+          if [ "${{ steps.check.outputs.needed }}" != "true" ]; then
+            echo "No release: \`$NAME@$VERSION\` is already on the registry." >> "$GITHUB_STEP_SUMMARY"
+          elif [ "$MODE" = "published" ]; then
+            echo "### Published \`$NAME@$VERSION\`" >> "$GITHUB_STEP_SUMMARY"
+            echo >> "$GITHUB_STEP_SUMMARY"
+            echo "Live on the registry and installable now." >> "$GITHUB_STEP_SUMMARY"
           else
-            echo "No publish: \`${{ steps.check.outputs.name }}@${{ steps.check.outputs.version }}\` is already on the registry." >> "$GITHUB_STEP_SUMMARY"
+            {
+              echo "### Staged \`$NAME@$VERSION\` — NOT installable yet"
+              echo
+              echo "The trusted publisher permits staging but not direct publish, so this run"
+              echo "uploaded the version and stopped. **Green here does not mean shipped.**"
+              echo
+              echo "Approve it with 2FA:"
+              echo
+              echo '```'
+              echo "npm stage list $NAME"
+              echo "npm stage approve <stage-id>"
+              echo '```'
+              echo
+              echo "or at npmjs.com -> Staged Packages."
+              echo
+              echo "To make releases fully automatic, tick \`npm publish\` under **Allowed"
+              echo "actions** on the trusted publisher. No code change is needed -- this"
+              echo "workflow publishes directly whenever it is permitted to."
+            } >> "$GITHUB_STEP_SUMMARY"
           fi

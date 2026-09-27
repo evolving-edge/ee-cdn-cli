@@ -205,15 +205,39 @@ These are properties of the CDN, not of this package:
 
 ## Releasing
 
-Bump the version in a pull request. When it merges to `main`, CI publishes that version and stops. Any other merge is a no-op, because the workflow asks the registry whether the version in `package.json` is already there.
+Releases are cut with [Changesets](https://github.com/changesets/changesets). The version number is reviewed as a diff before it exists, rather than typed into `package.json` by whoever remembered.
+
+**In a PR that changes behaviour**, add a changeset:
 
 ```bash
-npm version minor --no-git-tag-version   # then commit, PR, merge
+npm run changeset
 ```
+
+It asks whether the change is major, minor or patch and for a sentence describing it. Write that sentence for somebody installing the package, not for somebody reading the diff — it becomes the changelog entry. Docs-only or CI-only PRs do not need one.
+
+**Merging that PR** opens (or updates) a *Release: version packages* PR, which applies every pending changeset: bumps `package.json` and writes `CHANGELOG.md`.
+
+**Merging the version PR is the release.** CI sees a version the registry does not have and ships it.
+
+### Publishing, and why a green run may not mean shipped
 
 Publishing uses npm trusted publishing (OIDC) — there is no `NPM_TOKEN` anywhere.
 
-**The first publish of a new package cannot use OIDC.** npm hangs trusted publishers off a package's settings page, and a package that has never been published does not have one, so OIDC can publish to a package but cannot create one. An owner of the `evolving-edge` npm org publishes once by hand (`npm login && npm publish`), adds the trusted publisher, and every release after that is automatic. `.github/workflows/publish.yml` carries the exact field values, and CI fails with those instructions in the job summary if it runs before the bootstrap is done.
+What the final step does depends on one setting on npmjs.com. **Allowed actions** on a trusted publisher default to staging only; direct `npm publish` is a separate, unticked box. So:
+
+- **If `npm publish` is ticked**, the version goes straight to the registry and the release is complete when CI is green.
+- **If it is not**, CI stages the version instead. It is uploaded but **not installable** until a maintainer approves it with 2FA:
+
+  ```bash
+  npm stage list @evolving-edge/ee-cdn-cli
+  npm stage approve <stage-id>
+  ```
+
+  or at npmjs.com → Staged Packages.
+
+The workflow tries to publish and falls back to staging only on a 403 that names the action, so ticking the box is the only thing needed to go fully automatic — no code change. The run summary always says which of the two happened.
+
+Staging is npm's default for a reason: it puts a person between a compromised workflow and the registry. Ticking the box trades that for not having to approve each release.
 
 ## License
 
