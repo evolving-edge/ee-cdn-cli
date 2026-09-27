@@ -105,6 +105,7 @@ you find out in production, and warns on `trailingSlash: 'never'`.
 | `builderVersion` | string | `latest` | |
 | `builderChecksum` | string | — | Pin the binary's sha256. |
 | `workloads` | array | `[]` | Encrypted sub-bundles. Not needed for a normal site. |
+| `workloads[].embedKey` | boolean | `false` | Level 1 only. Bake the key into the built page instead of delivering it out of band. See below. |
 | `sdkUrl` | string \| false | `${cdnUrl}/ee.js` | Injected only when `data-ee` elements exist. |
 | `upload` | boolean | `true` | |
 | `dryRun` | boolean | `false` | Build and hash, stop before uploading. |
@@ -127,12 +128,49 @@ eeCdn({
 ```
 
 At build time each `data-ee` element has its workload name rewritten to a
-content hash, a `data-ee-key` added for Level 1, and the browser SDK injected
-into `<body>`. Keys are stable across deploys as long as the source bytes do
-not change — that is what `.ee-cache.json` is for; commit it.
+content hash, and the browser SDK is injected into `<body>`. Keys are stable
+across deploys as long as the source bytes do not change — that is what
+`.ee-cache.json` is for; commit it.
 
 A Level 0 site has no `data-ee` elements, so no script is injected and no
 JavaScript ships. That is deliberate.
+
+### Level 1 key delivery
+
+A Level 1 key decrypts client-side and belongs to whoever holds the page — it
+is never registered with the control plane, so nothing there can revoke or
+audit access to it the way Level 2's short-lived tokens do. Because of that,
+the build does **not** write the key into the HTML it produces by default:
+every edge node and every cache in front of your site would then be serving
+the key in the clear to anyone who requests the page, which defeats the point
+of keeping it out of server hands in the first place.
+
+Instead, the build logs each Level 1 workload's key once (`.ee-cache.json`
+also keeps a copy locally, keyed by workload) and expects you to deliver it out
+of band — typically as a URL fragment, which a conforming browser never sends
+to any server:
+
+```html
+<script src="https://cdn.3dge.app/ee.js" data-workload="<hash>"></script>
+```
+
+```
+https://app.example.com/gated-page#key=<the-logged-key>
+```
+
+Whoever hands out that link — an email, a purchase confirmation, your own
+authenticated redirect — is what gates access; the CDN and edge nodes never
+see the key. This is the same shape the portal uses for Level 1 (#208).
+
+If you'd rather have a link that works without a fragment and accept that the
+key then reaches every edge node and cache in the clear, set
+`workloads[].embedKey: true` on that workload and `data-ee-key` is written into
+the page as before.
+
+The `#key=` fragment carries one workload's key at a time. If a single page
+references more than one distinct Level 1 workload, only the one matching
+fragment resolves automatically — give the others `embedKey: true`, or deliver
+each key through your own script before the SDK's auto-init runs.
 
 ## ee-builder integrity
 

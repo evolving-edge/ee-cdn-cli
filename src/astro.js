@@ -156,6 +156,11 @@ export default function eeCdn(options = {}) {
           }
 
           const level = workload.level ?? 0;
+          // Level 1 only -- see the note at the point this is consumed in
+          // html.js. Defaults to false: a Level 1 key must be delivered out of
+          // band (URL fragment) unless the caller explicitly accepts what
+          // baking it into the page costs.
+          const embedKey = workload.embedKey ?? false;
           const contentHash = computeDirectoryHash(src);
           // The level is part of a build's identity, not a property of it: the
           // same bytes at Level 1 and Level 2 are different .ee files. Keying
@@ -183,7 +188,13 @@ export default function eeCdn(options = {}) {
               hash: hit.hash,
               level,
               key: hit.key ?? undefined,
+              embedKey,
             };
+            if (level === 1 && !embedKey) {
+              logger.warn(
+                `${workload.name}: Level 1 key (not embedded in HTML, embedKey is off) — ${hit.key}`,
+              );
+            }
             continue;
           }
 
@@ -204,9 +215,20 @@ export default function eeCdn(options = {}) {
           // deriving a key here at all is what defeated it: html.js writes any
           // key it is given into the markup, handing the browser the long-lived
           // material the gateway model exists to withhold (#262).
-          const entry = { hash: result.hash, level };
+          const entry = { hash: result.hash, level, embedKey };
           if (level === 1) entry.key = toKey(result.secret, result.salt);
           built[workload.name] = entry;
+
+          // A Level 1 key that isn't going into the page has to reach the
+          // operator some other way, or this just silently drops it (#241).
+          // It's already in workloads.json for anything that reads that file
+          // at build time; this is the one place it also reaches the console,
+          // matching #235's "return the key, don't drop it" for the portal.
+          if (level === 1 && !embedKey) {
+            logger.warn(
+              `${workload.name}: Level 1 key (not embedded in HTML, embedKey is off) — ${entry.key}`,
+            );
+          }
 
           if (willUpload) {
             await storeWorkload({
