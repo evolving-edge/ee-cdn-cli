@@ -139,22 +139,35 @@ describe('key embedding by encryption level (#262)', () => {
     assert.ok(out.includes('h'.repeat(64)), 'the hash is still resolved');
   });
 
-  // Level 1 is client-side decryption, so the key belongs in the page. Asserted
-  // so the fix above cannot be "fixed" into breaking Level 1.
-  it('still writes data-ee-key for a Level 1 workload', async () => {
-    const { file, run } = build('level1', {
+  // A Level 1 key is exactly as capable of reaching an edge node and every
+  // cache in front of it as a Level 2 one is, so the default is to withhold it
+  // and make the caller deliver it out of band (#241, matching #208's fix for
+  // the portal). embedKey is the explicit opt-in back to the old behavior.
+  it('does not write data-ee-key for a Level 1 workload by default', async () => {
+    const { file, run } = build('level1-default', {
       w: { hash: 'h'.repeat(64), level: 1, key: 'LEVEL-1-KEY' },
     });
     await run();
     const out = readFileSync(file, 'utf8');
-    assert.ok(out.includes('data-ee-key="LEVEL-1-KEY"'), 'Level 1 key belongs in the page');
+    assert.ok(!out.includes('LEVEL-1-KEY'), 'Level 1 key must not reach the page by default');
+    assert.ok(!out.includes('data-ee-key'), 'no data-ee-key attribute without embedKey');
+    assert.ok(out.includes('h'.repeat(64)), 'the hash is still resolved');
+  });
+
+  it('writes data-ee-key for a Level 1 workload when embedKey is set', async () => {
+    const { file, run } = build('level1-embed', {
+      w: { hash: 'h'.repeat(64), level: 1, key: 'LEVEL-1-KEY', embedKey: true },
+    });
+    await run();
+    const out = readFileSync(file, 'utf8');
+    assert.ok(out.includes('data-ee-key="LEVEL-1-KEY"'), 'embedKey opts back into the old behavior');
   });
 
   // Suppressing the write is not the same as enforcing the rule. A key already
-  // on the element -- copied from an example, or written by this function on an
-  // earlier pass before the workload moved to Level 2 -- is exactly as readable
-  // to a browser as one we put there, and the first version of this guard left
-  // it untouched.
+  // on the element -- copied from an example, or written by this function on
+  // an earlier pass before the workload moved to Level 2 or lost its embedKey
+  // opt-in -- is exactly as readable to a browser as one we put there, and the
+  // first version of this guard left it untouched.
   it('removes a data-ee-key that was already on a Level 2 element', async () => {
     const file = join(htmlDir, 'stale.html');
     writeFileSync(
@@ -169,9 +182,24 @@ describe('key embedding by encryption level (#262)', () => {
     assert.ok(!out.includes('data-ee-key'), 'no data-ee-key attribute survives at Level 2');
   });
 
+  it('removes a data-ee-key that was already on a Level 1 element without embedKey', async () => {
+    const file = join(htmlDir, 'stale-l1.html');
+    writeFileSync(
+      file,
+      '<html><body>' +
+        '<img data-ee="/a.svg" data-ee-workload="w" data-ee-key="STALE-KEY" />' +
+        '</body></html>',
+    );
+    await transformHtml(file, { w: { hash: 'h'.repeat(64), level: 1, key: 'CURRENT-KEY' } }, 'w', null);
+    const out = readFileSync(file, 'utf8');
+    assert.ok(!out.includes('STALE-KEY') && !out.includes('CURRENT-KEY'), 'no key survives without embedKey');
+    assert.ok(!out.includes('data-ee-key'), 'no data-ee-key attribute without embedKey');
+  });
+
   // The same removal must not eat a legitimate Level 1 key that the element
-  // already carried and that we are about to rewrite anyway.
-  it('still ends up with the correct key when Level 1 markup already had one', async () => {
+  // already carried and that we are about to rewrite anyway, when embedKey
+  // opts back into the old behavior.
+  it('still ends up with the correct key when Level 1 markup already had one and embedKey is set', async () => {
     const file = join(htmlDir, 'l1-existing.html');
     writeFileSync(
       file,
@@ -179,20 +207,30 @@ describe('key embedding by encryption level (#262)', () => {
         '<img data-ee="/a.svg" data-ee-workload="w" data-ee-key="OLD-KEY" />' +
         '</body></html>',
     );
-    await transformHtml(file, { w: { hash: 'h'.repeat(64), level: 1, key: 'NEW-KEY' } }, 'w', null);
+    await transformHtml(
+      file,
+      { w: { hash: 'h'.repeat(64), level: 1, key: 'NEW-KEY', embedKey: true } },
+      'w',
+      null,
+    );
     const out = readFileSync(file, 'utf8');
     assert.ok(out.includes('data-ee-key="NEW-KEY"'), 'Level 1 key is rewritten');
     assert.ok(!out.includes('OLD-KEY'), 'and the previous one is gone');
   });
 
-  // Entries written by an older build carry no `level`. Those only ever had a
-  // key at Level 1, so the absent field must not silently drop it.
-  it('treats a missing level as Level 1 for backward compatibility', async () => {
+  // Entries written by an older build carry no `level` and no `embedKey`.
+  // Those only ever had a key at Level 1, so the absent `level` must still be
+  // treated as Level 1 -- but an absent `embedKey` must not be treated as
+  // opted in, or every pre-#241 cache entry would keep leaking on its next
+  // build.
+  it('treats a missing level as Level 1, and a missing embedKey as not opted in', async () => {
     const { file, run } = build('legacy', {
       w: { hash: 'h'.repeat(64), key: 'LEGACY-KEY' },
     });
     await run();
-    assert.ok(readFileSync(file, 'utf8').includes('data-ee-key="LEGACY-KEY"'));
+    const out = readFileSync(file, 'utf8');
+    assert.ok(!out.includes('LEGACY-KEY'), 'a legacy entry must not keep leaking its key');
+    assert.ok(!out.includes('data-ee-key'), 'no data-ee-key attribute without an explicit embedKey');
   });
 });
 

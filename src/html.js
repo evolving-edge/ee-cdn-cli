@@ -2,8 +2,10 @@
  * Build-time HTML rewriting for encrypted (Level 1+) workloads.
  *
  * Elements carrying `data-ee` get their `data-ee-workload` resolved from a
- * workload *name* to its content *hash*, plus a `data-ee-key` for Level 1, and
- * the SDK script is appended to <body> if any such element was found.
+ * workload *name* to its content *hash*. A Level 1 key is written as
+ * `data-ee-key` only when the workload's `embedKey` option is explicitly set —
+ * see the note on that check below for why the default is to withhold it. The
+ * SDK script is appended to <body> if any such element was found.
  *
  * A Level 0 site — a normal blog or marketing site — has no `data-ee`
  * elements, so this is a no-op and no script is injected. That is intentional:
@@ -37,25 +39,36 @@ function rehypeInjectEE(workloads, defaultWorkload, sdkUrl) {
       const workload = workloads[name];
       if (!workload) return;
       node.properties.dataEeWorkload = workload.hash;
-      // Level 1 only, and decided here as well as at the point the key is
-      // derived. This is the step that puts material into markup we ship, so it
-      // enforces the rule rather than trusting its input: a Level 2 key
-      // reaching the page would silently undo the gateway model, and nothing
-      // downstream would report it (#262).
+      // Decided here as well as at the point the key is derived and at the
+      // point `embedKey` is read off the config (#241). This is the step that
+      // puts material into markup we ship, so it enforces the rule rather than
+      // trusting its input: a Level 2 key reaching the page would silently
+      // undo the gateway model, and nothing downstream would report it (#262).
+      // A Level 1 key is exactly as capable of reaching an edge node and every
+      // cache in front of it as a Level 2 one is -- the only reason it was
+      // treated differently is that Level 1's design tolerates the key being
+      // public, not that shipping it in HTML is free. The key still belongs to
+      // whoever holds the page (unlike Level 2's), so the default is to
+      // withhold it and let the operator deliver it out of band -- the same
+      // URL-fragment shape #208/#239 established for the portal -- rather than
+      // bake it into something every edge node serves in the clear. `embedKey`
+      // is the documented opt-in for a caller who wants a link that works
+      // without a fragment and accepts what that costs.
       //
       // Enforcing means removing, not merely declining to add. Suppressing the
       // assignment still leaves any data-ee-key that was already on the element
       // -- one an author copied from an example, or one this function wrote on
-      // an earlier pass before the workload moved to Level 2 -- and that
-      // attribute is exactly as readable to a browser as one we put there. The
-      // first version of this guard only skipped the write, so it enforced the
-      // rule for keys it produced and not for keys it inherited.
+      // an earlier pass before the workload moved to Level 2 or lost its
+      // `embedKey` opt-in -- and that attribute is exactly as readable to a
+      // browser as one we put there. The first version of this guard only
+      // skipped the write, so it enforced the rule for keys it produced and
+      // not for keys it inherited.
       //
       // `level` is absent on entries written by older builds; those only ever
       // carried a key for Level 1, so treating unknown as Level 1 keeps them
       // working without letting a Level 2 key through.
       const level = workload.level ?? 1;
-      if (workload.key && level === 1) {
+      if (workload.key && level === 1 && workload.embedKey) {
         node.properties.dataEeKey = workload.key;
       } else {
         delete node.properties.dataEeKey;
