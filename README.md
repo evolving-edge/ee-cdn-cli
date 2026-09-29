@@ -83,9 +83,15 @@ ee-builder -src dist -hash-only    # must equal the logged "Content hash"
 stylistic preferences.
 
 Edge nodes resolve request paths **literally**: `index.html` is appended only
-when the path already ends in `/`. There is no `.html` extension fallback and
-no trailing-slash redirect. So `build.format: 'file'` emits `page.html` while
-linking to `/page`, and **every page on the site 404s**.
+when the path already ends in `/`, and there is no `.html` extension fallback.
+So `build.format: 'file'` emits `page.html` while linking to `/page`, and
+**every page on the site 404s**.
+
+A request for `/page` without the slash 404s too, unless you opt in to the
+trailing-slash redirect: add the line `# ee:trailing-slash on` to
+`public/_redirects`, and the edge answers `/page` with a 301 to `/page/`. That
+rescues links from elsewhere; `trailingSlash: 'always'` keeps your own links
+from taking the extra hop. Redirects work on Level 0 sites only.
 
 The integration throws on `format: 'file'` at config time rather than letting
 you find out in production, and warns on `trailingSlash: 'never'`.
@@ -198,8 +204,10 @@ These are properties of the CDN, not of this package:
 - **`Cache-Control: no-cache`** on every edge-served file, including immutable
   hashed assets.
 - **No custom 404.** A miss returns plain text; your `404.html` is not served.
-- **No trailing-slash redirect.** `/page` 404s where `/page/` works.
-- **No redirect or response-header configuration.**
+- **The trailing-slash redirect is opt-in.** `/page` 404s where `/page/`
+  works, unless `_redirects` contains `# ee:trailing-slash on`.
+- **Redirects only, Level 0 only.** A Netlify-format `_redirects` file
+  supports 301 and 302 rules; there is no response-header configuration.
 - **Static only.** No SSR, no adapters.
 - **Custom-domain TLS is manual** (`flyctl certs create`); there is no ACME.
 
