@@ -201,9 +201,13 @@ alias — the previous bundle is still there.
 
 These are properties of the CDN, not of this package:
 
-- **`Cache-Control: no-cache`** on every edge-served file, including immutable
-  hashed assets.
-- **No custom 404.** A miss returns plain text; your `404.html` is not served.
+- **Cache headers are fixed, not configurable.** HTML revalidates on every
+  request (`max-age=0, must-revalidate`, with an ETag), files under `_astro/`
+  are cached for a year as immutable, and everything else for an hour with
+  `stale-while-revalidate`. Level 1 and 2 sites are served `no-cache`.
+- **One site-wide 404.** A miss serves your root `404.html` with a 404 status,
+  or the platform's own 404 page if you have none. There are no per-directory
+  404 pages.
 - **The trailing-slash redirect is opt-in.** `/page` 404s where `/page/`
   works, unless `_redirects` contains `# ee:trailing-slash on`.
 - **Redirects only, Level 0 only.** A Netlify-format `_redirects` file
