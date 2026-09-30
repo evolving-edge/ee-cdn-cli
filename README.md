@@ -189,6 +189,18 @@ lockfile** so CI verifies the same binary you built against. Pass
 Published targets are `linux/amd64`, `linux/arm64`, and `darwin/arm64`. On
 anything else, build from source and pass `builderPath`.
 
+## Custom domains
+
+`ee-domain` claims a hostname for a project and prints the two DNS records to add at your DNS provider. With `--wait`, it checks until the claim is active and the certificate is issued:
+
+```sh
+ee-domain claim blog.example.com --project proj_abc --wait
+ee-domain status blog.example.com
+ee-domain verify blog.example.com   # check the TXT record now
+```
+
+It reads `EE_CDN_TOKEN` and `EE_CDN_PROJECT_ID` like `ee-deploy`. For now, claiming needs an admin token; project owners get it when self-serve ships.
+
 ## After a deploy
 
 Propagation takes up to about 90 seconds: the control-plane alias cache is 60s,
