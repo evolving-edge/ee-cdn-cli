@@ -378,3 +378,49 @@ describe('ee-builder platforms (#389)', () => {
     assert.equal(cachedBuilderName('latest', 'darwin-amd64', 'darwin'), 'ee-builder-latest-darwin-amd64');
   });
 });
+
+describe('computeDirectoryHash and symlinks (#399)', () => {
+  const tmp = () => mkdtempSync(join(tmpdir(), 'ee-link-'));
+  it('follows a symlinked root and nested directory links, with paths under the folder', async () => {
+    const { symlinkSync } = await import('node:fs');
+    const base = tmp();
+    const out = join(base, '.output', 'public');
+    mkdirSync(join(out, '_shared'), { recursive: true });
+    writeFileSync(join(out, 'index.html'), '<p>x</p>');
+    writeFileSync(join(out, '_shared', 'logo.svg'), '<svg/>');
+    symlinkSync('_shared', join(out, 'assets'));
+    symlinkSync('.output/public', join(base, 'dist'));
+    try {
+      assert.equal(computeDirectoryHash(join(base, 'dist')), computeDirectoryHash(out));
+    } finally {
+      rmSync(base, { recursive: true, force: true });
+    }
+  });
+
+  it('refuses a link out of the folder, naming it', async () => {
+    const { symlinkSync } = await import('node:fs');
+    const base = tmp();
+    mkdirSync(join(base, 'site'));
+    mkdirSync(join(base, 'secret'));
+    writeFileSync(join(base, 'secret', 'id_rsa'), 'PRIVATE');
+    symlinkSync(join(base, 'secret', 'id_rsa'), join(base, 'site', 'leak'));
+    try {
+      assert.throws(() => computeDirectoryHash(join(base, 'site')), /leak points outside the site folder/);
+    } finally {
+      rmSync(base, { recursive: true, force: true });
+    }
+  });
+
+  it('refuses a cycle instead of looping', async () => {
+    const { symlinkSync } = await import('node:fs');
+    const site = tmp();
+    mkdirSync(join(site, 'a'));
+    writeFileSync(join(site, 'a', 'x.html'), 'x');
+    symlinkSync('..', join(site, 'a', 'up'));
+    try {
+      assert.throws(() => computeDirectoryHash(site), /cycle/);
+    } finally {
+      rmSync(site, { recursive: true, force: true });
+    }
+  });
+});
