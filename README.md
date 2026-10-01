@@ -223,10 +223,13 @@ alias — the previous bundle is still there.
 
 These are properties of the CDN, not of this package:
 
-- **Cache headers are fixed, not configurable.** HTML revalidates on every
-  request (`max-age=0, must-revalidate`, with an ETag), files under `_astro/`
-  are cached for a year as immutable, and everything else for an hour with
-  `stale-while-revalidate`. Level 1 and 2 sites are served `no-cache`.
+- **Default cache headers.** HTML revalidates on every request
+  (`max-age=0, must-revalidate`, with an ETag), files under `_astro/` (and a
+  few other known build folders) are cached for a year as immutable, and
+  everything else for an hour with `stale-while-revalidate`. Level 1 and 2
+  sites are served `no-cache`. On Level 0 a `_headers` file can set your own
+  `Cache-Control`, for example a year for your generator's hashed-asset
+  folder; see `docs/headers.md` in the ee-cdn repo for per-generator rules.
 - **One site-wide 404.** A miss serves your root `404.html` with a 404 status,
   or the platform's own 404 page if you have none. There are no per-directory
   404 pages.
@@ -237,8 +240,10 @@ These are properties of the CDN, not of this package:
   `cleanUrls`, and others) needs `# ee:clean-urls on` in `_redirects`, which
   serves `/page` from `page.html` without a redirect. Astro doesn't need it:
   it writes `page/index.html`.
-- **Redirects only, Level 0 only.** A Netlify-format `_redirects` file
-  supports 301 and 302 rules; there is no response-header configuration.
+- **Redirects are Level 0 only.** A Netlify-format `_redirects` file
+  supports 301, 302, 200 (rewrite) and 404 rules. A Netlify-format `_headers`
+  file sets response
+  headers on Level 0 and Level 2 sites, not Level 1.
 - **Static only.** No SSR, no adapters.
 - **Custom-domain TLS is manual** (`flyctl certs create`); there is no ACME.
 
