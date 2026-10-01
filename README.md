@@ -19,13 +19,22 @@ npx @evolving-edge/ee-cdn-cli ./public --domain blog.example.com --project proj_
 ```
 
 ```
-ee-deploy <directory> --domain <host> [options]
+ee-deploy [directory] --domain <host> [options]
 
-  --project <id>    Project ID. Required if your token is project-scoped.
-  --level <0|1|2>   Encryption level. Default 0.
-  --dry-run         Package but do not upload.
-  --help            Everything else.
+  --project <id>           Project ID. Required if your token is project-scoped.
+  --level <0|1|2>          Encryption level. Default 0.
+  --trailing-slash         Redirect /about to /about/.
+  --clean-urls             Serve /about from about.html.
+  --builder-version <v>    Pin ee-builder instead of using "latest".
+  --dry-run                Package but do not upload.
+  --help                   Everything else.
 ```
+
+**The directory is optional.** Without it, `ee-deploy` finds the build output from the project itself (`package.json` dependencies or the generator's config file): Astro, Next.js static export, Nuxt, SvelteKit, Docusaurus, VitePress, Gatsby, Hexo, Eleventy, Hugo, Jekyll, MkDocs, mdBook, Sphinx, Zola and Vite. It prints what it chose (`Deploying ./dist (detected: Astro)`), and it never guesses: with no match, two matches, or no `index.html` in the folder, it stops and asks for the directory.
+
+**Routing flags.** Most generators link to `/about` while writing `about/index.html`; `--trailing-slash` makes the edge redirect `/about` to `/about/`. Generators that write `about.html` instead (Quartz, Observable Framework, vite-ssg, VitePress with `cleanUrls`) want `--clean-urls`. Each flag writes its line into the output's `_redirects` (creating the file if needed), so the setting travels with the bundle. A site whose own `_redirects` already sets the pragma keeps its value, `off` included.
+
+**Pin ee-builder in CI.** By default the CLI downloads the latest `ee-builder` and records its checksum in `.ee-builder-lock.json`. With "latest" plus a committed lockfile, every new builder release fails the deploy with a checksum mismatch, by design. Pin a version instead (`--builder-version` or `EE_BUILDER_VERSION`, using the label from the "Upload ee-builder to CDN" run summary), and commit the lockfile.
 
 The deploy token comes from the portal (Workload → Deploy Tokens) and is read
 from `EE_CDN_TOKEN`; `EE_CDN_PROJECT_ID` and `EE_CDN_BUILD_ID` supply defaults
@@ -105,10 +114,11 @@ you find out in production, and warns on `trailingSlash: 'never'`.
 | `deploy.level` | `0 \| 1 \| 2` | `0` | `0` = compressed only. Use `0` for public sites. |
 | `deploy.projectId` | string | — | Required if your deploy token is project-scoped. |
 | `deploy.buildId` | string | — | Applies the Build Config's server-side defaults. |
+| `deploy.trailingSlash` | boolean | `true` | Writes `# ee:trailing-slash on` into `dist/_redirects`, so a bare `/about` redirects to `/about/` instead of 404ing. Set `false` to leave `_redirects` alone. |
 | `controlPlane` | string | `https://cp.3dge.app` | |
 | `token` | string | `$EE_CDN_TOKEN` | |
 | `builderPath` | string | — | Use a local `ee-builder` instead of downloading. |
-| `builderVersion` | string | `latest` | |
+| `builderVersion` | string | `latest` | Pin a published ee-builder version; see "Pin ee-builder in CI". |
 | `builderChecksum` | string | — | Pin the binary's sha256. |
 | `workloads` | array | `[]` | Encrypted sub-bundles. Not needed for a normal site. |
 | `workloads[].embedKey` | boolean | `false` | Level 1 only. Bake the key into the built page instead of delivering it out of band. See below. |

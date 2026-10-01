@@ -15,6 +15,7 @@ import { createRequire } from 'node:module';
 
 import { deploySite } from '../src/deploy.js';
 import { DEFAULT_CONTROL_PLANE } from '../src/builder.js';
+import { detectOutputDir } from '../src/detect.js';
 
 const { version } = createRequire(import.meta.url)('../package.json');
 
@@ -22,11 +23,19 @@ const USAGE = `
 ee-deploy — publish a directory to the Evolving Edge CDN
 
 USAGE
-  ee-deploy <directory> --domain <host> [options]
+  ee-deploy [directory] --domain <host> [options]
 
 REQUIRED
-  <directory>            Built site to publish (e.g. ./public, ./dist, ./_site)
   --domain, -d <host>    Hostname the edge serves this workload as
+
+DIRECTORY
+  [directory]            Built site to publish (e.g. ./public, ./dist, ./_site).
+                         Optional: without it, the output folder is detected
+                         from the project (Astro, Next.js static export, Nuxt,
+                         SvelteKit, Docusaurus, VitePress, Gatsby, Hexo,
+                         Eleventy, Hugo, Jekyll, MkDocs, mdBook, Sphinx, Zola,
+                         Vite). Nothing is guessed: if detection is unsure,
+                         it says what it found and asks.
 
 OPTIONS
   --project <id>         Project ID (proj_…). Required if your token is
@@ -37,7 +46,12 @@ OPTIONS
   --control-plane <url>  Default ${DEFAULT_CONTROL_PLANE}
   --build <id>           Build config ID, for server-side defaults
   --org <id>             Organisation ID
+  --trailing-slash       Redirect /about to /about/ (writes "# ee:trailing-slash on"
+                         into _redirects; the site's own setting wins)
+  --clean-urls           Serve /about from about.html (writes "# ee:clean-urls on")
   --builder <path>       Use a local ee-builder instead of downloading one
+  --builder-version <v>  Pin the ee-builder version instead of "latest".
+                         Defaults to $EE_BUILDER_VERSION
   --lockfile <path>      Builder checksum lockfile. Default .ee-builder-lock.json
   --cache-dir <path>     Where to keep the downloaded ee-builder.
                          Default $XDG_CACHE_HOME/evolving-edge or ~/.cache/evolving-edge
@@ -50,6 +64,7 @@ ENVIRONMENT
   EE_CDN_TOKEN           Deploy token, from the portal (Workload → Deploy Tokens)
   EE_CDN_PROJECT_ID      Default for --project
   EE_CDN_BUILD_ID        Default for --build
+  EE_BUILDER_VERSION     Default for --builder-version
 
 EXAMPLES
   ee-deploy ./public --domain blog.example.com --project proj_abc
@@ -76,6 +91,9 @@ try {
       build: { type: 'string' },
       org: { type: 'string' },
       builder: { type: 'string' },
+      'builder-version': { type: 'string' },
+      'trailing-slash': { type: 'boolean', default: false },
+      'clean-urls': { type: 'boolean', default: false },
       lockfile: { type: 'string' },
       'cache-dir': { type: 'string' },
       'dry-run': { type: 'boolean', default: false },
@@ -99,7 +117,16 @@ if (opts.version) {
   process.exit(0);
 }
 
-if (positionals.length === 0) fail('a directory to publish is required', { usage: true });
+let dir = positionals[0];
+if (positionals.length === 0) {
+  try {
+    const found = detectOutputDir(process.cwd());
+    dir = found.dir;
+    console.log(`Deploying ./${found.rel} (detected: ${found.label})`);
+  } catch (err) {
+    fail(err.message);
+  }
+}
 if (positionals.length > 1) {
   fail(`expected one directory, got ${positionals.length}: ${positionals.join(', ')}`);
 }
@@ -135,7 +162,10 @@ const logger = opts.quiet
 
 try {
   const result = await deploySite({
-    dir: positionals[0],
+    dir,
+    trailingSlash: opts['trailing-slash'],
+    cleanUrls: opts['clean-urls'],
+    builderVersion: opts['builder-version'] ?? process.env.EE_BUILDER_VERSION ?? 'latest',
     domain,
     name: opts.name,
     level,
