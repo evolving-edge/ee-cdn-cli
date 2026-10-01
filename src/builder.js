@@ -96,6 +96,12 @@ export async function ensureBuilder({
 
   const res = await fetch(url);
   if (!res.ok) {
+    if (res.status === 404 && version !== 'latest') {
+      throw new Error(
+        `ee-builder version "${version}" isn't published for ${key}. Check the ` +
+          'label in the "Upload ee-builder to CDN" run summary, or use "latest".',
+      );
+    }
     throw new Error(
       `Failed to download ee-builder (${res.status} ${res.statusText}) from ${url}`,
     );
