@@ -358,3 +358,23 @@ describe('computeDirectoryHash default exclusions (#398)', () => {
     }
   });
 });
+
+describe('ee-builder platforms (#389)', () => {
+  it('lists Windows and Intel Mac, and matches the upload workflow', async () => {
+    const { SUPPORTED } = await import('../src/builder.js');
+    for (const k of ['linux-amd64', 'linux-arm64', 'darwin-arm64', 'darwin-amd64', 'windows-amd64']) {
+      assert.ok(SUPPORTED.has(k), k);
+    }
+    // The workflow publishes exactly what the CLI will download.
+    const wf = readFileSync(new URL('../../.github/workflows/upload-ee-builder.yml', import.meta.url), 'utf8');
+    const loops = [...wf.matchAll(/for target in ([^;]+); do/g)].map((m) => m[1].trim().split(/\s+/).map((t) => t.replace('/', '-')).sort());
+    assert.equal(loops.length, 2);
+    for (const l of loops) assert.deepEqual(l, [...SUPPORTED].sort());
+  });
+
+  it('caches the Windows builder with .exe, so it can be started', async () => {
+    const { cachedBuilderName } = await import('../src/builder.js');
+    assert.equal(cachedBuilderName('latest', 'windows-amd64', 'windows'), 'ee-builder-latest-windows-amd64.exe');
+    assert.equal(cachedBuilderName('latest', 'darwin-amd64', 'darwin'), 'ee-builder-latest-darwin-amd64');
+  });
+});

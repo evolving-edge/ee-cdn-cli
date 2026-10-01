@@ -21,8 +21,25 @@ import { dirname, join } from 'node:path';
 
 export const DEFAULT_CONTROL_PLANE = 'https://cp.3dge.app';
 
-/** ee-builder is published for these only. */
-const SUPPORTED = new Set(['linux-amd64', 'linux-arm64', 'darwin-arm64']);
+/**
+ * ee-builder is published for these only. Must match the target loops in
+ * .github/workflows/upload-ee-builder.yml.
+ */
+export const SUPPORTED = new Set([
+  'linux-amd64',
+  'linux-arm64',
+  'darwin-arm64',
+  'darwin-amd64',
+  'windows-amd64',
+]);
+
+/**
+ * Where a downloaded builder is cached. Windows can't start a file without
+ * an executable extension, so it gets .exe there.
+ */
+export function cachedBuilderName(version, key, os) {
+  return `ee-builder-${version}-${key}${os === 'windows' ? '.exe' : ''}`;
+}
 
 function targetTriple() {
   const os = { linux: 'linux', darwin: 'darwin', win32: 'windows' }[osPlatform()];
@@ -65,7 +82,7 @@ export async function ensureBuilder({
     );
   }
 
-  const binPath = join(cacheDir, `ee-builder-${version}-${key}`);
+  const binPath = join(cacheDir, cachedBuilderName(version, key, os));
   const expected = checksum ?? readLock(lockfilePath, key, version);
 
   if (existsSync(binPath)) {
