@@ -222,6 +222,11 @@ These are properties of the CDN, not of this package:
   404 pages.
 - **The trailing-slash redirect is opt-in.** `/page` 404s where `/page/`
   works, unless `_redirects` contains `# ee:trailing-slash on`.
+- **Clean URLs are opt-in.** A generator that writes `page.html` but links to
+  `/page` (Quartz, Observable Framework, vite-ssg, VitePress with
+  `cleanUrls`, and others) needs `# ee:clean-urls on` in `_redirects`, which
+  serves `/page` from `page.html` without a redirect. Astro doesn't need it:
+  it writes `page/index.html`.
 - **Redirects only, Level 0 only.** A Netlify-format `_redirects` file
   supports 301 and 302 rules; there is no response-header configuration.
 - **Static only.** No SSR, no adapters.
