@@ -15,6 +15,12 @@ import {
 } from 'node:fs';
 import { dirname, join } from 'node:path';
 
+// The files ee-builder leaves out by default (ee-builder/default_excludes.go,
+// #398): version-control directories and OS folder metadata. The cache key
+// skips them too, so it changes exactly when the bundle would.
+const VCS_DIRS = new Set(['.git', '.hg', '.svn']);
+const OS_METADATA = new Set(['.DS_Store', 'Thumbs.db']);
+
 export function computeDirectoryHash(dirPath) {
   const files = [];
 
@@ -23,8 +29,11 @@ export function computeDirectoryHash(dirPath) {
     for (const entry of entries) {
       const full = join(dir, entry.name);
       const rel = join(base, entry.name);
-      if (entry.isDirectory()) collect(full, rel);
-      else files.push({ rel, full });
+      if (entry.isDirectory()) {
+        if (!VCS_DIRS.has(entry.name)) collect(full, rel);
+      } else if (!OS_METADATA.has(entry.name)) {
+        files.push({ rel, full });
+      }
     }
   })(dirPath);
 

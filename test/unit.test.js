@@ -333,3 +333,28 @@ describe('sub-workload uploads follow the deploy target (#263)', () => {
     }
   });
 });
+
+describe('computeDirectoryHash default exclusions (#398)', () => {
+  it('ignores .git, .hg, .svn, .DS_Store and Thumbs.db, as ee-builder does', () => {
+    const make = (files) => {
+      const dir = mkdtempSync(join(tmpdir(), 'ee-hash-'));
+      for (const [p, c] of Object.entries(files)) {
+        mkdirSync(join(dir, p, '..'), { recursive: true });
+        writeFileSync(join(dir, p), c);
+      }
+      return dir;
+    };
+    const site = { 'index.html': '<p>x</p>', '.well-known/security.txt': 'Contact: x', '.nojekyll': '' };
+    const clean = make(site);
+    const dirty = make({ ...site, '.git/HEAD': 'ref', 'a/.svn/entries': 'x', '.DS_Store': 'b', 'img/Thumbs.db': 't' });
+    try {
+      assert.equal(computeDirectoryHash(dirty), computeDirectoryHash(clean));
+      const withReal = make({ ...site, '.gitignore': 'node_modules' });
+      assert.notEqual(computeDirectoryHash(withReal), computeDirectoryHash(clean), 'real dot-files still count');
+      rmSync(withReal, { recursive: true, force: true });
+    } finally {
+      rmSync(clean, { recursive: true, force: true });
+      rmSync(dirty, { recursive: true, force: true });
+    }
+  });
+});
