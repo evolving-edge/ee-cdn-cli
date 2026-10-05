@@ -99,5 +99,5 @@ runs:
         [ "$DEPLOY_TRAILING_SLASH" = "true" ] && args+=(--trailing-slash)
         [ "$DEPLOY_CLEAN_URLS" = "true" ] && args+=(--clean-urls)
         [ -n "$DEPLOY_DIRECTORY" ] && args+=("$DEPLOY_DIRECTORY")
-        node "${{ github.action_path }}/../bin/ee-deploy.js" "${args[@]}"
+        node "${{ github.action_path }}/bin/ee-deploy.js" "${args[@]}"
         echo "url=https://$DEPLOY_DOMAIN" >> "$GITHUB_OUTPUT"

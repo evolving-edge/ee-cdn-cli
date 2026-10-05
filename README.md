@@ -56,7 +56,7 @@ images — `uses:` this action and it brings its own:
   with:
     hugo-version: 'latest'
 - run: hugo --minify
-- uses: evolving-edge/ee-cdn-cli/action@main
+- uses: evolving-edge/ee-cdn-cli@main
   with:
     directory: public
     domain: blog.example.com
@@ -68,7 +68,7 @@ It can also run a Tailwind CSS build first, for generators that have no build
 step of their own for it:
 
 ```yaml
-- uses: evolving-edge/ee-cdn-cli/action@main
+- uses: evolving-edge/ee-cdn-cli@main
   with:
     directory: public
     domain: blog.example.com
@@ -77,7 +77,7 @@ step of their own for it:
     tailwind-output: public/style.css
 ```
 
-See `action/action.yml` for every input — they mirror the CLI's own flags.
+See `action.yml` for every input — they mirror the CLI's own flags.
 This wraps `ee-deploy` directly (no npm install, no separate Node setup step
 in the calling workflow); it does not package or run any other build tool.
 
