@@ -319,6 +319,11 @@ export default function eeCdn(options = {}) {
           // `upload: false` packages nothing and uploads nothing; a dry run
           // packages but stops short of the network.
           dryRun: dryRun || !upload,
+          // Astro links with a trailing slash (trailingSlash: 'always' is
+          // required), but a bare /about from anywhere else 404s without the
+          // edge's trailing-slash rule. On unless deploy.trailingSlash is
+          // false (#396).
+          trailingSlash: deploy.trailingSlash ?? true,
           builderPath: builderPath ? join(projectRoot, builderPath) : null,
           builderVersion,
           builderChecksum,
