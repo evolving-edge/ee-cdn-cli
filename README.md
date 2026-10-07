@@ -196,8 +196,9 @@ The control plane publishes a `.sha256` sidecar for `edge-node` but not for
 lockfile** so CI verifies the same binary you built against. Pass
 `builderChecksum` to pin a digest explicitly instead.
 
-Published targets are `linux/amd64`, `linux/arm64`, and `darwin/arm64`. On
-anything else, build from source and pass `builderPath`.
+Published targets are `linux/amd64`, `linux/arm64`, `darwin/arm64`,
+`darwin/amd64` and `windows/amd64`. On anything else, build from source and
+pass `builderPath`.
 
 ## Custom domains
 
@@ -209,7 +210,7 @@ ee-domain status blog.example.com
 ee-domain verify blog.example.com   # check the TXT record now
 ```
 
-It reads `EE_CDN_TOKEN` and `EE_CDN_PROJECT_ID` like `ee-deploy`. For now, claiming needs an admin token; project owners get it when self-serve ships.
+It reads `EE_CDN_TOKEN` and `EE_CDN_PROJECT_ID` like `ee-deploy`. Use a project-scoped deploy token, which manages its own project's domains, or an admin token. Global deploy tokens are refused.
 
 ## After a deploy
 
@@ -229,7 +230,8 @@ These are properties of the CDN, not of this package:
   everything else for an hour with `stale-while-revalidate`. Level 1 and 2
   sites are served `no-cache`. On Level 0 a `_headers` file can set your own
   `Cache-Control`, for example a year for your generator's hashed-asset
-  folder; see `docs/headers.md` in the ee-cdn repo for per-generator rules.
+  folder; see [Response headers](https://docs.evolvingedge.ai/headers/) for
+  per-generator rules.
 - **One site-wide 404.** A miss serves your root `404.html` with a 404 status,
   or the platform's own 404 page if you have none. There are no per-directory
   404 pages.
@@ -245,7 +247,8 @@ These are properties of the CDN, not of this package:
   file sets response
   headers on Level 0 and Level 2 sites, not Level 1.
 - **Static only.** No SSR, no adapters.
-- **Custom-domain TLS is manual** (`flyctl certs create`); there is no ACME.
+- **A custom domain needs a claim.** Its certificate is issued once the
+  claim's DNS records are verified; see [Custom domains](#custom-domains).
 
 ## Releasing
 
