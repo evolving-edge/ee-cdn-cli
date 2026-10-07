@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, rmSync } from 'node:fs';
+import { existsSync, mkdtempSync, mkdirSync, writeFileSync, readFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { pathToFileURL } from 'node:url';
@@ -330,6 +330,101 @@ describe('sub-workload uploads follow the deploy target (#263)', () => {
       assert.equal(l0.w.level, 0);
     } finally {
       globalThis.fetch = realFetch;
+    }
+  });
+});
+
+describe('computeDirectoryHash default exclusions (#398)', () => {
+  it('ignores .git, .hg, .svn, .DS_Store and Thumbs.db, as ee-builder does', () => {
+    const make = (files) => {
+      const dir = mkdtempSync(join(tmpdir(), 'ee-hash-'));
+      for (const [p, c] of Object.entries(files)) {
+        mkdirSync(join(dir, p, '..'), { recursive: true });
+        writeFileSync(join(dir, p), c);
+      }
+      return dir;
+    };
+    const site = { 'index.html': '<p>x</p>', '.well-known/security.txt': 'Contact: x', '.nojekyll': '' };
+    const clean = make(site);
+    const dirty = make({ ...site, '.git/HEAD': 'ref', 'a/.svn/entries': 'x', '.DS_Store': 'b', 'img/Thumbs.db': 't' });
+    try {
+      assert.equal(computeDirectoryHash(dirty), computeDirectoryHash(clean));
+      const withReal = make({ ...site, '.gitignore': 'node_modules' });
+      assert.notEqual(computeDirectoryHash(withReal), computeDirectoryHash(clean), 'real dot-files still count');
+      rmSync(withReal, { recursive: true, force: true });
+    } finally {
+      rmSync(clean, { recursive: true, force: true });
+      rmSync(dirty, { recursive: true, force: true });
+    }
+  });
+});
+
+describe('ee-builder platforms (#389)', () => {
+  it('lists Windows and Intel Mac, and matches the upload workflow', async () => {
+    const { SUPPORTED } = await import('../src/builder.js');
+    for (const k of ['linux-amd64', 'linux-arm64', 'darwin-arm64', 'darwin-amd64', 'windows-amd64']) {
+      assert.ok(SUPPORTED.has(k), k);
+    }
+    // The workflow publishes exactly what the CLI will download. It lives in
+    // the ee-cdn monorepo, so this half only runs there; in the standalone
+    // ee-cdn-cli repo there is no workflow to compare against.
+    const wfUrl = new URL('../../.github/workflows/upload-ee-builder.yml', import.meta.url);
+    if (!existsSync(wfUrl)) return;
+    const wf = readFileSync(wfUrl, 'utf8');
+    const loops = [...wf.matchAll(/for target in ([^;]+); do/g)].map((m) => m[1].trim().split(/\s+/).map((t) => t.replace('/', '-')).sort());
+    assert.equal(loops.length, 2);
+    for (const l of loops) assert.deepEqual(l, [...SUPPORTED].sort());
+  });
+
+  it('caches the Windows builder with .exe, so it can be started', async () => {
+    const { cachedBuilderName } = await import('../src/builder.js');
+    assert.equal(cachedBuilderName('latest', 'windows-amd64', 'windows'), 'ee-builder-latest-windows-amd64.exe');
+    assert.equal(cachedBuilderName('latest', 'darwin-amd64', 'darwin'), 'ee-builder-latest-darwin-amd64');
+  });
+});
+
+describe('computeDirectoryHash and symlinks (#399)', () => {
+  const tmp = () => mkdtempSync(join(tmpdir(), 'ee-link-'));
+  it('follows a symlinked root and nested directory links, with paths under the folder', async () => {
+    const { symlinkSync } = await import('node:fs');
+    const base = tmp();
+    const out = join(base, '.output', 'public');
+    mkdirSync(join(out, '_shared'), { recursive: true });
+    writeFileSync(join(out, 'index.html'), '<p>x</p>');
+    writeFileSync(join(out, '_shared', 'logo.svg'), '<svg/>');
+    symlinkSync('_shared', join(out, 'assets'));
+    symlinkSync('.output/public', join(base, 'dist'));
+    try {
+      assert.equal(computeDirectoryHash(join(base, 'dist')), computeDirectoryHash(out));
+    } finally {
+      rmSync(base, { recursive: true, force: true });
+    }
+  });
+
+  it('refuses a link out of the folder, naming it', async () => {
+    const { symlinkSync } = await import('node:fs');
+    const base = tmp();
+    mkdirSync(join(base, 'site'));
+    mkdirSync(join(base, 'secret'));
+    writeFileSync(join(base, 'secret', 'id_rsa'), 'PRIVATE');
+    symlinkSync(join(base, 'secret', 'id_rsa'), join(base, 'site', 'leak'));
+    try {
+      assert.throws(() => computeDirectoryHash(join(base, 'site')), /leak points outside the site folder/);
+    } finally {
+      rmSync(base, { recursive: true, force: true });
+    }
+  });
+
+  it('refuses a cycle instead of looping', async () => {
+    const { symlinkSync } = await import('node:fs');
+    const site = tmp();
+    mkdirSync(join(site, 'a'));
+    writeFileSync(join(site, 'a', 'x.html'), 'x');
+    symlinkSync('..', join(site, 'a', 'up'));
+    try {
+      assert.throws(() => computeDirectoryHash(site), /cycle/);
+    } finally {
+      rmSync(site, { recursive: true, force: true });
     }
   });
 });

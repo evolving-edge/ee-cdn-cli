@@ -64,7 +64,9 @@
     "access": "public"
   },
   "bin": {
-    "ee-deploy": "./bin/ee-deploy.js"
+    "ee-cdn-cli": "./bin/ee-deploy.js",
+    "ee-deploy": "./bin/ee-deploy.js",
+    "ee-domain": "./bin/ee-domain.js"
   },
   "peerDependenciesMeta": {
     "astro": {

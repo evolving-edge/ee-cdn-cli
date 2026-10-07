@@ -11,6 +11,7 @@
  * unverifiable domain binding, the builder checksum, the 100 MiB cap — and we
  * would rather fix them once than twice.
  */
+import { ensurePragmas } from './pragmas.js';
 import { existsSync, mkdirSync, rmSync, statSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { isAbsolute, join, resolve } from 'node:path';
@@ -66,6 +67,8 @@ export async function deploySite({
   lockfilePath = null,
   cacheDir = defaultCacheDir(),
   metadata = {},
+  trailingSlash = false,
+  cleanUrls = false,
   logger = console,
 }) {
   const src = isAbsolute(dir) ? dir : resolve(process.cwd(), dir);
@@ -88,6 +91,10 @@ export async function deploySite({
         cacheDir,
         logger,
       });
+
+  // Written into the build output before packaging, on a dry run too, so a
+  // dry-run bundle matches a real one (#395).
+  ensurePragmas(src, { trailingSlash, cleanUrls }, logger);
 
   const out = scratchFile('site.ee');
   logger.info(`Packaging ${src} as a Level ${level} workload…`);

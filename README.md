@@ -19,13 +19,22 @@ npx @evolving-edge/ee-cdn-cli ./public --domain blog.example.com --project proj_
 ```
 
 ```
-ee-deploy <directory> --domain <host> [options]
+ee-deploy [directory] --domain <host> [options]
 
-  --project <id>    Project ID. Required if your token is project-scoped.
-  --level <0|1|2>   Encryption level. Default 0.
-  --dry-run         Package but do not upload.
-  --help            Everything else.
+  --project <id>           Project ID. Required if your token is project-scoped.
+  --level <0|1|2>          Encryption level. Default 0.
+  --trailing-slash         Redirect /about to /about/.
+  --clean-urls             Serve /about from about.html.
+  --builder-version <v>    Pin ee-builder instead of using "latest".
+  --dry-run                Package but do not upload.
+  --help                   Everything else.
 ```
+
+**The directory is optional.** Without it, `ee-deploy` finds the build output from the project itself (`package.json` dependencies or the generator's config file): Astro, Next.js static export, Nuxt, SvelteKit, Docusaurus, VitePress, Gatsby, Hexo, Eleventy, Hugo, Jekyll, MkDocs, mdBook, Sphinx, Zola and Vite. It prints what it chose (`Deploying ./dist (detected: Astro)`), and it never guesses: with no match, two matches, or no `index.html` in the folder, it stops and asks for the directory.
+
+**Routing flags.** Most generators link to `/about` while writing `about/index.html`; `--trailing-slash` makes the edge redirect `/about` to `/about/`. Generators that write `about.html` instead (Quartz, Observable Framework, vite-ssg, VitePress with `cleanUrls`) want `--clean-urls`. Each flag writes its line into the output's `_redirects` (creating the file if needed), so the setting travels with the bundle. A site whose own `_redirects` already sets the pragma keeps its value, `off` included.
+
+**Pin ee-builder in CI.** By default the CLI downloads the latest `ee-builder` and records its checksum in `.ee-builder-lock.json`. With "latest" plus a committed lockfile, every new builder release fails the deploy with a checksum mismatch, by design. Pin a version instead (`--builder-version` or `EE_BUILDER_VERSION`, using the label from the "Upload ee-builder to CDN" run summary), and commit the lockfile.
 
 The deploy token comes from the portal (Workload → Deploy Tokens) and is read
 from `EE_CDN_TOKEN`; `EE_CDN_PROJECT_ID` and `EE_CDN_BUILD_ID` supply defaults
@@ -105,10 +114,11 @@ you find out in production, and warns on `trailingSlash: 'never'`.
 | `deploy.level` | `0 \| 1 \| 2` | `0` | `0` = compressed only. Use `0` for public sites. |
 | `deploy.projectId` | string | — | Required if your deploy token is project-scoped. |
 | `deploy.buildId` | string | — | Applies the Build Config's server-side defaults. |
+| `deploy.trailingSlash` | boolean | `true` | Writes `# ee:trailing-slash on` into `dist/_redirects`, so a bare `/about` redirects to `/about/` instead of 404ing. Set `false` to leave `_redirects` alone. |
 | `controlPlane` | string | `https://cp.3dge.app` | |
 | `token` | string | `$EE_CDN_TOKEN` | |
 | `builderPath` | string | — | Use a local `ee-builder` instead of downloading. |
-| `builderVersion` | string | `latest` | |
+| `builderVersion` | string | `latest` | Pin a published ee-builder version; see "Pin ee-builder in CI". |
 | `builderChecksum` | string | — | Pin the binary's sha256. |
 | `workloads` | array | `[]` | Encrypted sub-bundles. Not needed for a normal site. |
 | `workloads[].embedKey` | boolean | `false` | Level 1 only. Bake the key into the built page instead of delivering it out of band. See below. |
@@ -189,6 +199,18 @@ lockfile** so CI verifies the same binary you built against. Pass
 Published targets are `linux/amd64`, `linux/arm64`, and `darwin/arm64`. On
 anything else, build from source and pass `builderPath`.
 
+## Custom domains
+
+`ee-domain` claims a hostname for a project and prints the two DNS records to add at your DNS provider. With `--wait`, it checks until the claim is active and the certificate is issued:
+
+```sh
+ee-domain claim blog.example.com --project proj_abc --wait
+ee-domain status blog.example.com
+ee-domain verify blog.example.com   # check the TXT record now
+```
+
+It reads `EE_CDN_TOKEN` and `EE_CDN_PROJECT_ID` like `ee-deploy`. For now, claiming needs an admin token; project owners get it when self-serve ships.
+
 ## After a deploy
 
 Propagation takes up to about 90 seconds: the control-plane alias cache is 60s,
@@ -201,17 +223,27 @@ alias — the previous bundle is still there.
 
 These are properties of the CDN, not of this package:
 
-- **Cache headers are fixed, not configurable.** HTML revalidates on every
-  request (`max-age=0, must-revalidate`, with an ETag), files under `_astro/`
-  are cached for a year as immutable, and everything else for an hour with
-  `stale-while-revalidate`. Level 1 and 2 sites are served `no-cache`.
+- **Default cache headers.** HTML revalidates on every request
+  (`max-age=0, must-revalidate`, with an ETag), files under `_astro/` (and a
+  few other known build folders) are cached for a year as immutable, and
+  everything else for an hour with `stale-while-revalidate`. Level 1 and 2
+  sites are served `no-cache`. On Level 0 a `_headers` file can set your own
+  `Cache-Control`, for example a year for your generator's hashed-asset
+  folder; see `docs/headers.md` in the ee-cdn repo for per-generator rules.
 - **One site-wide 404.** A miss serves your root `404.html` with a 404 status,
   or the platform's own 404 page if you have none. There are no per-directory
   404 pages.
 - **The trailing-slash redirect is opt-in.** `/page` 404s where `/page/`
   works, unless `_redirects` contains `# ee:trailing-slash on`.
-- **Redirects only, Level 0 only.** A Netlify-format `_redirects` file
-  supports 301 and 302 rules; there is no response-header configuration.
+- **Clean URLs are opt-in.** A generator that writes `page.html` but links to
+  `/page` (Quartz, Observable Framework, vite-ssg, VitePress with
+  `cleanUrls`, and others) needs `# ee:clean-urls on` in `_redirects`, which
+  serves `/page` from `page.html` without a redirect. Astro doesn't need it:
+  it writes `page/index.html`.
+- **Redirects are Level 0 only.** A Netlify-format `_redirects` file
+  supports 301, 302, 200 (rewrite) and 404 rules. A Netlify-format `_headers`
+  file sets response
+  headers on Level 0 and Level 2 sites, not Level 1.
 - **Static only.** No SSR, no adapters.
 - **Custom-domain TLS is manual** (`flyctl certs create`); there is no ACME.
 
