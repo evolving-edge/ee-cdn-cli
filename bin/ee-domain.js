@@ -42,7 +42,8 @@ OPTIONS
   --wait                 Keep checking until the claim is active (or fails)
   --interval <seconds>   Between checks with --wait. Default 30
   --timeout <minutes>    Give up waiting after this long. Default 120
-  --token <token>        Defaults to $EE_CDN_TOKEN. Admin only for now.
+  --token <token>        Defaults to $EE_CDN_TOKEN. A project-scoped deploy token
+                         (its own project's domains) or an admin token
   --control-plane <url>  Default ${DEFAULT_CONTROL_PLANE}
   --json                 Print the control plane's response as JSON
   --version, -v

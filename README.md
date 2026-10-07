@@ -209,7 +209,7 @@ ee-domain status blog.example.com
 ee-domain verify blog.example.com   # check the TXT record now
 ```
 
-It reads `EE_CDN_TOKEN` and `EE_CDN_PROJECT_ID` like `ee-deploy`. For now, claiming needs an admin token; project owners get it when self-serve ships.
+It reads `EE_CDN_TOKEN` and `EE_CDN_PROJECT_ID` like `ee-deploy`. Use a project-scoped deploy token, which manages its own project's domains, or an admin token. Global deploy tokens are refused.
 
 ## After a deploy
 
