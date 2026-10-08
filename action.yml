@@ -1,0 +1,103 @@
+name: 'Deploy to Evolving Edge CDN'
+description: >-
+  Optionally build a Tailwind CSS stylesheet, then publish a directory to the
+  Evolving Edge CDN as an .ee workload. Wraps ee-deploy — no Node setup step
+  needed in the calling workflow.
+branding:
+  icon: 'upload-cloud'
+  color: 'purple'
+
+inputs:
+  directory:
+    description: >-
+      Directory to deploy (e.g. ./public, ./dist, ./_site). If omitted,
+      ee-deploy detects the build output from the project itself.
+    required: false
+  domain:
+    description: 'Hostname the edge serves this workload as.'
+    required: true
+  token:
+    description: 'Deploy token (portal -> Workload -> Deploy Tokens). Pass from a secret.'
+    required: true
+  project:
+    description: 'Project ID (proj_...). Required if the token is project-scoped.'
+    required: false
+  level:
+    description: 'Encryption level: 0, 1 or 2.'
+    required: false
+    default: '0'
+  name:
+    description: 'Workload name. Defaults to the domain.'
+    required: false
+  trailing-slash:
+    description: 'Redirect /about to /about/.'
+    required: false
+    default: 'false'
+  clean-urls:
+    description: 'Serve /about from about.html.'
+    required: false
+    default: 'false'
+  tailwind-input:
+    description: >-
+      Path to a CSS file with @tailwind directives. When set, the Tailwind
+      CLI runs before deploying.
+    required: false
+  tailwind-output:
+    description: >-
+      Where the compiled stylesheet is written. Required if tailwind-input
+      is set; should point inside "directory" so it is included in the
+      deploy.
+    required: false
+  tailwind-config:
+    description: 'Path to a tailwind.config.js/ts. Defaults to Tailwind''s own discovery.'
+    required: false
+
+outputs:
+  url:
+    description: 'The deployed site URL.'
+    value: ${{ steps.deploy.outputs.url }}
+
+runs:
+  using: 'composite'
+  steps:
+    - name: Set up Node.js
+      uses: actions/setup-node@v4
+      with:
+        node-version: '22.12'
+
+    - name: Build Tailwind CSS
+      if: inputs.tailwind-input != ''
+      shell: bash
+      env:
+        TAILWIND_INPUT: ${{ inputs.tailwind-input }}
+        TAILWIND_OUTPUT: ${{ inputs.tailwind-output }}
+        TAILWIND_CONFIG: ${{ inputs.tailwind-config }}
+      run: |
+        if [ -z "$TAILWIND_OUTPUT" ]; then
+          echo "::error::tailwind-output is required when tailwind-input is set."
+          exit 1
+        fi
+        args=(-i "$TAILWIND_INPUT" -o "$TAILWIND_OUTPUT" --minify)
+        [ -n "$TAILWIND_CONFIG" ] && args+=(--config "$TAILWIND_CONFIG")
+        npx -y @tailwindcss/cli@latest "${args[@]}"
+
+    - name: Deploy to Evolving Edge CDN
+      id: deploy
+      shell: bash
+      env:
+        EE_CDN_TOKEN: ${{ inputs.token }}
+        EE_CDN_PROJECT_ID: ${{ inputs.project }}
+        DEPLOY_DIRECTORY: ${{ inputs.directory }}
+        DEPLOY_DOMAIN: ${{ inputs.domain }}
+        DEPLOY_LEVEL: ${{ inputs.level }}
+        DEPLOY_NAME: ${{ inputs.name }}
+        DEPLOY_TRAILING_SLASH: ${{ inputs.trailing-slash }}
+        DEPLOY_CLEAN_URLS: ${{ inputs.clean-urls }}
+      run: |
+        args=(--domain "$DEPLOY_DOMAIN" --level "$DEPLOY_LEVEL")
+        [ -n "$DEPLOY_NAME" ] && args+=(--name "$DEPLOY_NAME")
+        [ "$DEPLOY_TRAILING_SLASH" = "true" ] && args+=(--trailing-slash)
+        [ "$DEPLOY_CLEAN_URLS" = "true" ] && args+=(--clean-urls)
+        [ -n "$DEPLOY_DIRECTORY" ] && args+=("$DEPLOY_DIRECTORY")
+        node "${{ github.action_path }}/bin/ee-deploy.js" "${args[@]}"
+        echo "url=https://$DEPLOY_DOMAIN" >> "$GITHUB_OUTPUT"

@@ -43,6 +43,44 @@ for `--project` and `--build`.
 **Publii**: set deployment to *Manual*, which writes the site to a folder, then
 point `ee-deploy` at that folder.
 
+## GitHub Action
+
+For CI pipelines that don't already have Node — Hugo, Zola, Jekyll, Pelican,
+mdBook, Sphinx, MkDocs, Quarto and others typically run on Go/Ruby/Python/Rust
+images — `uses:` this action and it brings its own:
+
+```yaml
+- uses: actions/checkout@v5
+- name: Build with Hugo
+  uses: peaceiris/actions-hugo@v3
+  with:
+    hugo-version: 'latest'
+- run: hugo --minify
+- uses: evolving-edge/ee-cdn-cli@main
+  with:
+    directory: public
+    domain: blog.example.com
+    project: proj_abc
+    token: ${{ secrets.EE_CDN_TOKEN }}
+```
+
+It can also run a Tailwind CSS build first, for generators that have no build
+step of their own for it:
+
+```yaml
+- uses: evolving-edge/ee-cdn-cli@main
+  with:
+    directory: public
+    domain: blog.example.com
+    token: ${{ secrets.EE_CDN_TOKEN }}
+    tailwind-input: src/style.css
+    tailwind-output: public/style.css
+```
+
+See `action.yml` for every input — they mirror the CLI's own flags.
+This wraps `ee-deploy` directly (no npm install, no separate Node setup step
+in the calling workflow); it does not package or run any other build tool.
+
 ## Astro
 
 ```bash
