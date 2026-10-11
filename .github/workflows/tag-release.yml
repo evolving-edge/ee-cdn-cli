@@ -1,0 +1,68 @@
+# Tags the commit each published version was built from, as v<version>.
+#
+# WHY THIS IS NOT A STEP IN publish.yml: a version is only staged when that
+# workflow finishes, and becomes installable later, when a maintainer approves
+# it on npm. Tagging there would label versions that may never ship. This
+# workflow asks the registry instead, so a tag only ever means "installable".
+# It also keeps `contents: write` away from the job that holds the npm
+# credential.
+#
+# WHEN THE TAG APPEARS: on the next push to main after the approval, or on the
+# daily run, whichever comes first. Run it by hand to tag straight away.
+#
+# It tags the commit the registry records for the version (gitHead), not
+# whatever main happens to be, so a late run still tags the right commit.
+name: Tag releases
+
+on:
+  push:
+    branches: [main]
+  schedule:
+    - cron: '17 6 * * *'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  tag:
+    name: Tag the latest published version
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          fetch-depth: 0
+
+      - uses: actions/setup-node@v5
+        with:
+          node-version: '24'
+
+      - name: Tag the latest version on the registry if it has no tag
+        run: |
+          NAME="$(node -p "require('./package.json').name")"
+          VERSION="$(npm view "$NAME" dist-tags.latest)"
+          TAG="v$VERSION"
+
+          if git ls-remote --exit-code --tags origin "refs/tags/$TAG" >/dev/null; then
+            echo "$TAG already exists — nothing to do."
+            echo "No tag needed: \`$TAG\` already exists." >> "$GITHUB_STEP_SUMMARY"
+            exit 0
+          fi
+
+          SHA="$(npm view "$NAME@$VERSION" gitHead)"
+          if [ -z "$SHA" ]; then
+            echo "::error::The registry records no commit for $NAME@$VERSION, so there is nothing to tag."
+            exit 1
+          fi
+          # A version published from anywhere but main's history should not
+          # happen, and is not something to paper over with a tag.
+          if ! git merge-base --is-ancestor "$SHA" origin/main; then
+            echo "::error::$NAME@$VERSION was built from $SHA, which is not on main — refusing to tag it."
+            exit 1
+          fi
+
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git tag -a "$TAG" "$SHA" -m "$NAME@$VERSION"
+          git push origin "refs/tags/$TAG"
+          echo "Tagged \`$TAG\` at \`${SHA:0:7}\`." >> "$GITHUB_STEP_SUMMARY"
