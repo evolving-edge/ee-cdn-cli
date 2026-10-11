@@ -2,6 +2,12 @@
 
 Versions from 0.3.0 onward are written by [Changesets](https://github.com/changesets/changesets) from the changeset each pull request carries. The two entries below predate that and were reconstructed from the commit history, so they are less detailed than later ones will be.
 
+## 0.3.1
+
+### Patch Changes
+
+- 4a752f4: The ee-domain command no longer says custom domains are admin-only.
+
 ## 0.3.0
 
 ### Minor Changes
