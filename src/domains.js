@@ -7,7 +7,8 @@
  * reconciler sees the TXT record, a certificate is issued, and the claim goes
  * active. These calls create a claim, read it, and ask for an immediate check.
  *
- * Today the endpoints are admin-only; project owners get them in phase 2.
+ * A project-scoped deploy token manages its own project's claims (self-serve,
+ * #432); an admin token manages any. Global deploy tokens are refused.
  */
 
 const TERMINAL_OK = 'active';
@@ -47,7 +48,7 @@ function hint(status) {
     case 401:
       return '\nThe token was rejected. Pass --token or set EE_CDN_TOKEN.';
     case 403:
-      return '\nThe token is valid but may not manage domain claims (admin only for now).';
+      return '\nThe token is valid but may not manage this claim. Use a project-scoped deploy token for the claim\'s project, or an admin token; global deploy tokens are refused.';
     case 409:
       return '\nThe hostname is already claimed, by this project or another.';
     case 429:
