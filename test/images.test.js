@@ -153,8 +153,28 @@ describe('a builder too old for image options (#570)', () => {
       deploySite({ dir: s, domain: 'example.com', dryRun: true, builderPath: fb.bin, cacheDir: join(d, 'c'), images: 'off', logger: quiet }),
       /too old to convert images/,
     );
-    // ee.jsonc saying "off", or not mentioning images, needs no probe.
-    for (const body of ['{ "images": "off" }\n', '{ "name": "x" }\n']) {
+    // A "//" inside a string is not a comment: the setting after it counts.
+    writeFileSync(join(s, 'ee.jsonc'), '{ "domain": "https://example.com", "images": "webp" }\n');
+    await assert.rejects(
+      deploySite({ dir: s, domain: 'example.com', dryRun: true, builderPath: fb.bin, cacheDir: join(d, 'c'), logger: quiet }),
+      /ee\.jsonc line 1 turns image conversion on/,
+    );
+    // An object form that turns it on is refused too.
+    writeFileSync(join(s, 'ee.jsonc'), '{ "name": "x",\n  "images": { "format": "avif", "quality": 50 } }\n');
+    await assert.rejects(
+      deploySite({ dir: s, domain: 'example.com', dryRun: true, builderPath: fb.bin, cacheDir: join(d, 'c'), logger: quiet }),
+      /ee\.jsonc line 2 turns image conversion on/,
+    );
+    // Read as ee-builder reads it (4288854484): "off", an object with
+    // format "off", a commented-out setting, the text inside a string, and no
+    // key at all need no probe.
+    for (const body of [
+      '{ "images": "off" }\n',
+      '{ "images": { "format": "off" } }\n',
+      '{\n  // "images": "webp",\n  /* "images": "avif" */\n  "name": "x",\n}\n',
+      '{ "name": "say \\"images\\": \\"webp\\" here" }\n',
+      '{ "name": "x" }\n',
+    ]) {
       writeFileSync(join(s, 'ee.jsonc'), body);
       const r = await deploySite({ dir: s, domain: 'example.com', dryRun: true, builderPath: fb.bin, cacheDir: join(d, 'c'), logger: quiet });
       rmSync(r.workloadPath, { force: true });
@@ -295,7 +315,7 @@ describe('a cached latest ee-builder against its published checksum (#570)', () 
     const d = fresh('stale');
     const p = cache(d, 'builder old');
     const asked = serve('builder new');
-    assert.equal(await ensureBuilder(opts(d)), p);
+    assert.equal(readFileSync(await ensureBuilder(opts(d)), 'utf8'), 'builder new');
     assert.equal(readFileSync(p, 'utf8'), 'builder new');
     assert.ok(asked.some((u) => !u.endsWith('.sha256')), 'the new binary was downloaded');
   });
@@ -346,6 +366,10 @@ describe('a cached latest ee-builder against its published checksum (#570)', () 
     assert.deepEqual(asked.filter((u) => !u.endsWith('.sha256')), []);
     // And B keeps B.
     assert.equal(readFileSync(await ensureBuilder(opts(d, { lockfilePath: lockB })), 'utf8'), 'builder B');
+    // A path handed back stays the binary that was checked, whatever replaces
+    // the plain name afterwards (4288854448).
+    assert.equal(readFileSync(first, 'utf8'), 'builder A');
+    assert.equal(readFileSync(again, 'utf8'), 'builder A');
   });
 
   it('keeps a pinned binary that an older cdn-cli cached under the plain name only', async () => {
@@ -365,12 +389,12 @@ describe('a cached latest ee-builder against its published checksum (#570)', () 
     const d = fresh('offline');
     const p = cache(d, 'builder old');
     const asked = serve('builder new', { sidecar: false });
-    assert.equal(await ensureBuilder(opts(d)), p);
+    assert.equal(readFileSync(await ensureBuilder(opts(d)), 'utf8'), 'builder old');
     assert.equal(readFileSync(p, 'utf8'), 'builder old');
     assert.deepEqual(asked.filter((u) => !u.endsWith('.sha256')), []);
     globalThis.fetch = async () => {
       throw new Error('offline');
     };
-    assert.equal(await ensureBuilder(opts(d)), p);
+    assert.equal(readFileSync(await ensureBuilder(opts(d)), 'utf8'), 'builder old');
   });
 });

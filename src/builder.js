@@ -115,10 +115,29 @@ export async function ensureBuilder({
   // copy is also kept under its digest, so a project moving to a newer
   // "latest" never takes away the binary another project's lockfile pins.
   const digestPath = (d) => join(cacheDir, cachedBuilderName(`${version}@${d.slice(0, 16)}`, key, os));
+  // Writes through a temp name, so a killed build cannot leave a truncated
+  // binary.
+  const place = (bytes, dest) => {
+    mkdirSync(cacheDir, { recursive: true });
+    const tmp = join(cacheDir, `.ee-builder-${process.pid}.part`);
+    writeFileSync(tmp, bytes);
+    chmodSync(tmp, 0o755);
+    renameSync(tmp, dest);
+  };
+  // A verified binary is handed back under its digest, never the plain name:
+  // another deploy on the machine may replace the plain name between this
+  // check and the run.
+  const keep = (bytes, d) => {
+    const p = digestPath(d);
+    if (!existsSync(p) || sha256(readFileSync(p)) !== d) place(bytes, p);
+    return p;
+  };
   const want = expected ?? published ?? null;
   if (want) {
-    for (const p of [binPath, digestPath(want)]) {
-      if (existsSync(p) && sha256(readFileSync(p)) === want) {
+    for (const p of [digestPath(want), binPath]) {
+      if (!existsSync(p)) continue;
+      const bytes = readFileSync(p);
+      if (sha256(bytes) === want) {
         if (expected && published && published !== expected) {
           logger.warn(
             `A newer ee-builder ${version} is published (sha256 ${published.slice(0, 16)}…), ` +
@@ -126,7 +145,7 @@ export async function ensureBuilder({
               `"${version}:${key}" entry to move to the newer one.`,
           );
         }
-        return p;
+        return keep(bytes, want);
       }
     }
     if (existsSync(binPath)) {
@@ -139,7 +158,8 @@ export async function ensureBuilder({
   } else if (existsSync(binPath)) {
     // Nothing pinned and no published digest to compare (offline, or an
     // older release without one): the last download is the best there is.
-    return binPath;
+    const bytes = readFileSync(binPath);
+    return keep(bytes, sha256(bytes));
   }
 
   if (published === undefined) published = await publishedDigest(url);
@@ -179,26 +199,21 @@ export async function ensureBuilder({
     );
   }
 
-  mkdirSync(cacheDir, { recursive: true });
   // The copy about to be replaced stays under its own digest: another
   // project may pin it.
   if (existsSync(binPath)) {
-    const old = sha256(readFileSync(binPath));
-    if (old !== digest && !existsSync(digestPath(old))) renameSync(binPath, digestPath(old));
+    const oldBytes = readFileSync(binPath);
+    const old = sha256(oldBytes);
+    if (old !== digest) keep(oldBytes, old);
   }
-  // Write via a temp name so a killed build cannot leave a truncated binary.
-  for (const dest of [digestPath(digest), binPath]) {
-    const tmp = join(cacheDir, `.ee-builder-${process.pid}.part`);
-    writeFileSync(tmp, bytes);
-    chmodSync(tmp, 0o755);
-    renameSync(tmp, dest);
-  }
+  place(bytes, binPath);
+  const kept = keep(bytes, digest);
 
   if (!checksum) {
     writeLock(lockfilePath, key, version, digest, Boolean(expected), logger);
   }
   logger.info(`ee-builder ready (${(bytes.length / 1e6).toFixed(1)} MB, sha256 ${digest.slice(0, 16)}…)`);
-  return binPath;
+  return kept;
 }
 
 function readLock(path, key, version) {
@@ -303,11 +318,72 @@ export function builderImageFlags(builderPath) {
  * packages the images unconverted.
  */
 export function configImagesLine(src) {
-  const p = join(src, 'ee.jsonc');
-  if (!existsSync(p)) return 0;
-  const text = readFileSync(p, 'utf8');
-  const m = /"images"\s*:\s*("(?:webp|avif)"|\{)/.exec(text);
-  return m ? text.slice(0, m.index).split('\n').length : 0;
+  const r = readEEJsonc(join(src, 'ee.jsonc'));
+  if (!r || r.value === null || typeof r.value !== 'object') return 0;
+  const v = r.value.images;
+  const format = typeof v === 'string' ? v : v && typeof v === 'object' ? v.format : undefined;
+  if (format !== 'webp' && format !== 'avif') return 0;
+  const m = /"images"\s*:/.exec(r.blanked);
+  return m ? r.blanked.slice(0, m.index).split('\n').length : 1;
+}
+
+/**
+ * ee.jsonc read as ee-builder reads it, near enough to know its "images"
+ * setting: comments outside strings blanked (keeping every newline, so lines
+ * still count) and trailing commas dropped, then JSON.parse. Null when the
+ * file is missing or does not parse; ee-builder reports a broken file itself.
+ */
+export function readEEJsonc(path) {
+  let text;
+  try {
+    text = readFileSync(path, 'utf8');
+  } catch {
+    return null;
+  }
+  if (text.charCodeAt(0) === 0xfeff) text = text.slice(1);
+  const blank = (s) => s.replace(/[^\n]/g, ' ');
+  let out = '';
+  for (let i = 0; i < text.length; i++) {
+    const c = text[i];
+    if (c === '"') {
+      let j = i + 1;
+      while (j < text.length && text[j] !== '"') j += text[j] === '\\' ? 2 : 1;
+      out += text.slice(i, j + 1);
+      i = j;
+    } else if (c === '/' && text[i + 1] === '/') {
+      const nl = text.indexOf('\n', i);
+      const stop = nl < 0 ? text.length : nl;
+      out += blank(text.slice(i, stop));
+      i = stop - 1;
+    } else if (c === '/' && text[i + 1] === '*') {
+      const end = text.indexOf('*/', i + 2);
+      const stop = end < 0 ? text.length : end + 2;
+      out += blank(text.slice(i, stop));
+      i = stop - 1;
+    } else {
+      out += c;
+    }
+  }
+  // A comma with only blanks before the closing } or ], outside strings.
+  let json = '';
+  for (let i = 0; i < out.length; i++) {
+    const c = out[i];
+    if (c === '"') {
+      let j = i + 1;
+      while (j < out.length && out[j] !== '"') j += out[j] === '\\' ? 2 : 1;
+      json += out.slice(i, j + 1);
+      i = j;
+    } else if (c === ',' && /^\s*[}\]]/.test(out.slice(i + 1))) {
+      json += ' ';
+    } else {
+      json += c;
+    }
+  }
+  try {
+    return { value: JSON.parse(json), blanked: out };
+  } catch {
+    return null;
+  }
 }
 
 /** Refuse a builder too old for the image options it is about to be given. */
