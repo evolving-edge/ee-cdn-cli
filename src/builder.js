@@ -145,6 +145,9 @@ export async function ensureBuilder({
               `"${version}:${key}" entry to move to the newer one.`,
           );
         }
+        // A project using a warm cache for the first time pins what it
+        // used, as a download would, so a later release cannot switch it.
+        if (!checksum && !expected) writeLock(lockfilePath, key, version, want, false, logger);
         return keep(bytes, want);
       }
     }
@@ -159,7 +162,9 @@ export async function ensureBuilder({
     // Nothing pinned and no published digest to compare (offline, or an
     // older release without one): the last download is the best there is.
     const bytes = readFileSync(binPath);
-    return keep(bytes, sha256(bytes));
+    const have = sha256(bytes);
+    if (!checksum) writeLock(lockfilePath, key, version, have, false, logger);
+    return keep(bytes, have);
   }
 
   if (published === undefined) published = await publishedDigest(url);

@@ -259,6 +259,25 @@ describe('the CLI and the Astro integration pass the image options (#570)', () =
   });
 });
 
+describe('Astro checks the site image options before any workload is built (#570)', () => {
+  it('an invalid option stops at astro:config:setup, before astro:build:start', async () => {
+    const root = fresh('astro-bad');
+    const fb = fakeBuilder(root);
+    const eeCdn = (await import('../src/astro.js')).default;
+    for (const deploy of [
+      { domain: 'example.com', imageHosts: ['a.example,b.example'] },
+      { domain: 'example.com', images: 'jpegxl' },
+    ]) {
+      const integration = eeCdn({ deploy, builderPath: 'fake-ee-builder', dryRun: true });
+      assert.throws(
+        () => integration.hooks['astro:config:setup']({ config: { root: pathToFileURL(`${root}/`), build: {} }, logger: quiet }),
+        /ee-cdn-cli\] deploy: (image host|images must be)/,
+      );
+    }
+    assert.equal(fb.args(), null, 'nothing was packaged');
+  });
+});
+
 describe('where ee-builder output goes (#570)', () => {
   it('stderr reaches the terminal, stdout is parsed, and stdin is closed', () => {
     const d = fresh('stdio');
@@ -383,6 +402,28 @@ describe('a cached latest ee-builder against its published checksum (#570)', () 
     const again = await ensureBuilder(opts(d, { lockfilePath: lockA, logger: { info() {}, warn() {} } }));
     assert.equal(readFileSync(again, 'utf8'), 'builder A');
     assert.deepEqual(asked.filter((u) => !u.endsWith('.sha256')), []);
+  });
+
+  it('pins what a project first used from a warm cache, so a later release cannot switch it', async () => {
+    const d = fresh('warm');
+    serve('builder A');
+    await ensureBuilder(opts(d, { lockfilePath: join(d, 'x.lock.json') }));
+    // Project Y deploys for the first time against the warm cache.
+    const lockY = join(d, 'y.lock.json');
+    const asked = serve('builder A');
+    assert.equal(readFileSync(await ensureBuilder(opts(d, { lockfilePath: lockY })), 'utf8'), 'builder A');
+    assert.deepEqual(asked.filter((u) => !u.endsWith('.sha256')), [], 'served from the cache');
+    assert.equal(JSON.parse(readFileSync(lockY, 'utf8'))[`latest:${key}`], digest('builder A'));
+    // A newer latest is published: Y keeps what it pinned.
+    serve('builder B');
+    assert.equal(readFileSync(await ensureBuilder(opts(d, { lockfilePath: lockY, logger: { info() {}, warn() {} } })), 'utf8'), 'builder A');
+    // Offline, a project new to the cache pins the copy it used too.
+    globalThis.fetch = async () => {
+      throw new Error('offline');
+    };
+    const lockZ = join(d, 'z.lock.json');
+    const used = readFileSync(await ensureBuilder(opts(d, { lockfilePath: lockZ })), 'utf8');
+    assert.equal(JSON.parse(readFileSync(lockZ, 'utf8'))[`latest:${key}`], digest(used));
   });
 
   it('uses the cache when no checksum is published or reachable', async () => {

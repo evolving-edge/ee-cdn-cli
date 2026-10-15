@@ -32,6 +32,7 @@ import { fileURLToPath } from 'node:url';
 import {
   DEFAULT_CONTROL_PLANE,
   ensureBuilder,
+  imageOptions,
   runBuilder,
   scratchFile,
   toKey,
@@ -122,6 +123,19 @@ export default function eeCdn(options = {}) {
             "trailingSlash: 'never' will 404 on ee-cdn — the edge only " +
               "appends index.html to paths ending in '/'. Use 'always'.",
           );
+        }
+        // The site's image options are checked here, before
+        // astro:build:start packages and uploads any sub-workload (#570).
+        if (deploy) {
+          try {
+            imageOptions({
+              images: deploy.images ?? null,
+              imageHosts: deploy.imageHosts ?? [],
+              imageReport: deploy.imageReport ? resolve(projectRoot, deploy.imageReport) : null,
+            });
+          } catch (e) {
+            throw new Error(`[@evolving-edge/ee-cdn-cli] deploy: ${e.message}`);
+          }
         }
         if (deploy?.domain && !token && upload && !dryRun) {
           logger.warn(
