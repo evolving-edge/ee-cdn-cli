@@ -325,6 +325,12 @@ export function builderImageFlags(builderPath) {
   // not one without image flags.
   if (r.error) throw new Error(`Could not run ee-builder at ${builderPath} to check its flags: ${r.error.message}`);
   const usage = `${r.stdout ?? ''}${r.stderr ?? ''}`;
+  // -h exits 0 (Go's flag package since 1.16), so anything else is a failure
+  // to report as such, with what it printed: a crash at start, a signal.
+  if (r.status !== 0 || r.signal) {
+    const how = r.signal ? `was killed by ${r.signal}` : `exited ${r.status}`;
+    throw new Error(`ee-builder at ${builderPath} ${how} when asked for its flags (-h):\n${usage.trim().slice(-2000)}`);
+  }
   return IMAGE_FLAGS.filter((f) => new RegExp(`^\\s+${f}\\b`, 'm').test(usage));
 }
 

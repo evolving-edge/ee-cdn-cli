@@ -137,6 +137,16 @@ describe('a builder too old for image options (#570)', () => {
     assert.throws(() => requireImageSupport(bin, 'hint'), (e) => /Could not run ee-builder/.test(e.message) && !/too old/.test(e.message));
   });
 
+  it('reports a builder that fails on -h, with its output, rather than calling it too old', () => {
+    const d = fresh('crash');
+    const bin = join(d, 'ee-builder');
+    writeFileSync(bin, '#!/bin/sh\necho "panic: built without -tags nodynamic" >&2\nexit 2\n', { mode: 0o755 });
+    assert.throws(
+      () => requireImageSupport(bin, 'hint'),
+      (e) => /exited 2 when asked for its flags/.test(e.message) && /without -tags nodynamic/.test(e.message) && !/too old/.test(e.message),
+    );
+  });
+
   it('refuses before packaging when image options are given', async () => {
     const d = fresh('old');
     const fb = fakeBuilder(d, { imageFlags: false });
