@@ -110,24 +110,36 @@ export async function ensureBuilder({
   // undefined: not asked yet. null: asked, and there is none.
   let published = version === 'latest' && !checksum ? await publishedDigest(url) : undefined;
 
-  if (existsSync(binPath)) {
-    const have = sha256(readFileSync(binPath));
-    if (expected && have === expected) {
-      if (published && published !== expected) {
-        logger.warn(
-          `A newer ee-builder ${version} is published (sha256 ${published.slice(0, 16)}…), ` +
-            `but ${lockfilePath} pins ${expected.slice(0, 16)}…. Delete its ` +
-            `"${version}:${key}" entry to move to the newer one.`,
-        );
+  // The cache is shared by every project on the machine, and each may pin a
+  // different release. The plain name holds the copy downloaded last; every
+  // copy is also kept under its digest, so a project moving to a newer
+  // "latest" never takes away the binary another project's lockfile pins.
+  const digestPath = (d) => join(cacheDir, cachedBuilderName(`${version}@${d.slice(0, 16)}`, key, os));
+  const want = expected ?? published ?? null;
+  if (want) {
+    for (const p of [binPath, digestPath(want)]) {
+      if (existsSync(p) && sha256(readFileSync(p)) === want) {
+        if (expected && published && published !== expected) {
+          logger.warn(
+            `A newer ee-builder ${version} is published (sha256 ${published.slice(0, 16)}…), ` +
+              `but ${lockfilePath} pins ${expected.slice(0, 16)}…. Delete its ` +
+              `"${version}:${key}" entry to move to the newer one.`,
+          );
+        }
+        return p;
       }
-      return binPath;
     }
-    if (!expected && (!published || have === published)) return binPath;
-    if (expected) {
-      logger.warn(`Cached ee-builder digest ${have} did not match; re-downloading.`);
-    } else {
-      logger.info(`A newer ee-builder ${version} is published; replacing the cached copy.`);
+    if (existsSync(binPath)) {
+      if (expected) {
+        logger.warn(`No cached ee-builder matches the pinned digest ${expected.slice(0, 16)}…; re-downloading.`);
+      } else {
+        logger.info(`A newer ee-builder ${version} is published; downloading it.`);
+      }
     }
+  } else if (existsSync(binPath)) {
+    // Nothing pinned and no published digest to compare (offline, or an
+    // older release without one): the last download is the best there is.
+    return binPath;
   }
 
   if (published === undefined) published = await publishedDigest(url);
@@ -168,11 +180,19 @@ export async function ensureBuilder({
   }
 
   mkdirSync(cacheDir, { recursive: true });
+  // The copy about to be replaced stays under its own digest: another
+  // project may pin it.
+  if (existsSync(binPath)) {
+    const old = sha256(readFileSync(binPath));
+    if (old !== digest && !existsSync(digestPath(old))) renameSync(binPath, digestPath(old));
+  }
   // Write via a temp name so a killed build cannot leave a truncated binary.
-  const tmp = join(cacheDir, `.ee-builder-${process.pid}.part`);
-  writeFileSync(tmp, bytes);
-  chmodSync(tmp, 0o755);
-  renameSync(tmp, binPath);
+  for (const dest of [digestPath(digest), binPath]) {
+    const tmp = join(cacheDir, `.ee-builder-${process.pid}.part`);
+    writeFileSync(tmp, bytes);
+    chmodSync(tmp, 0o755);
+    renameSync(tmp, dest);
+  }
 
   if (!checksum) {
     writeLock(lockfilePath, key, version, digest, Boolean(expected), logger);
@@ -275,13 +295,28 @@ export function builderImageFlags(builderPath) {
   return IMAGE_FLAGS.filter((f) => new RegExp(`^\\s+${f}\\b`, 'm').test(usage));
 }
 
+/**
+ * The line of the site's ee.jsonc that turns image conversion on, or 0: an
+ * "images" key whose value is "webp", "avif" or an object. Not a parser:
+ * ee-builder reads the file properly. This only decides whether the builder
+ * must be one that reads the key at all, since an older one ignores it and
+ * packages the images unconverted.
+ */
+export function configImagesLine(src) {
+  const p = join(src, 'ee.jsonc');
+  if (!existsSync(p)) return 0;
+  const text = readFileSync(p, 'utf8');
+  const m = /"images"\s*:\s*("(?:webp|avif)"|\{)/.exec(text);
+  return m ? text.slice(0, m.index).split('\n').length : 0;
+}
+
 /** Refuse a builder too old for the image options it is about to be given. */
-export function requireImageSupport(builderPath, hint) {
+export function requireImageSupport(builderPath, hint, why = '') {
   const have = builderImageFlags(builderPath);
   const missing = IMAGE_FLAGS.filter((f) => !have.includes(f));
   if (missing.length) {
     throw new Error(
-      `ee-builder at ${builderPath} is too old to convert images: it has no ` +
+      `${why}ee-builder at ${builderPath} is too old to convert images: it has no ` +
         `${missing.join(', ')} (\`ee-builder -h\` lists the flags it has). ${hint}`,
     );
   }

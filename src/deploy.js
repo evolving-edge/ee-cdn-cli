@@ -18,6 +18,7 @@ import { isAbsolute, join, resolve } from 'node:path';
 
 import {
   DEFAULT_CONTROL_PLANE,
+  configImagesLine,
   ensureBuilder,
   imageOptions,
   requireImageSupport,
@@ -99,18 +100,25 @@ export async function deploySite({
         logger,
       });
 
-  // Only when image options were given: a builder from before image
-  // conversion packages a site without them exactly as it always did, and
-  // would refuse the flags with a usage error that says nothing useful.
+  // Only when images are asked for: a builder from before image conversion
+  // packages a site without them exactly as it always did, and would refuse
+  // the flags with a usage error that says nothing useful. Asked for means
+  // by an option, or, with no option given, by the site's ee.jsonc, which an
+  // older builder ignores and so would package the images unconverted.
+  const hint = builderPath
+    ? 'Rebuild it from the current ee-cdn source (go build -tags nodynamic in ee-builder) and pass that with builderPath (--builder).'
+    : `Use a published ee-builder that has them: if ${lockfilePath ?? 'your lockfile'} pins ee-builder ${builderVersion}, ` +
+      'delete that entry so the current release is fetched, or pin a newer label with builderVersion (--builder-version). ' +
+      'If the current release predates image conversion, build ee-builder from source (go build -tags nodynamic) ' +
+      'and pass it with builderPath (--builder).';
+  const configLine = imgs ? 0 : configImagesLine(src);
   if (imgs) {
+    requireImageSupport(bin, hint);
+  } else if (configLine) {
     requireImageSupport(
       bin,
-      builderPath
-        ? 'Rebuild it from the current ee-cdn source (go build -tags nodynamic in ee-builder) and pass that with builderPath (--builder).'
-        : `Use a published ee-builder that has them: if ${lockfilePath ?? 'your lockfile'} pins ee-builder ${builderVersion}, ` +
-            'delete that entry so the current release is fetched, or pin a newer label with builderVersion (--builder-version). ' +
-            'If the current release predates image conversion, build ee-builder from source (go build -tags nodynamic) ' +
-            'and pass it with builderPath (--builder).',
+      `${hint} Or deploy without converting with images: "off" (--images off).`,
+      `${join(src, 'ee.jsonc')} line ${configLine} turns image conversion on, but `,
     );
   }
 

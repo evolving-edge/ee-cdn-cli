@@ -137,6 +137,31 @@ describe('a builder too old for image options (#570)', () => {
     assert.equal(fb.args(), null, 'the old builder must not have been run to package');
   });
 
+  it('refuses when only ee.jsonc turns conversion on, unless an option turns it off (4288790956)', async () => {
+    const d = fresh('old-config');
+    const fb = fakeBuilder(d, { imageFlags: false });
+    const s = site(d);
+    writeFileSync(join(s, 'ee.jsonc'), '{\n  // photos\n  "images": "webp",\n}\n');
+    await assert.rejects(
+      deploySite({ dir: s, domain: 'example.com', dryRun: true, builderPath: fb.bin, cacheDir: join(d, 'c'), logger: quiet }),
+      /ee\.jsonc line 3 turns image conversion on, but ee-builder .* too old.*images: "off"/s,
+    );
+    assert.equal(fb.args(), null, 'the old builder must not have been run to package');
+    // "off" from an option overrides ee.jsonc; an old builder then fails on
+    // the flag itself, so the option is refused the same way.
+    await assert.rejects(
+      deploySite({ dir: s, domain: 'example.com', dryRun: true, builderPath: fb.bin, cacheDir: join(d, 'c'), images: 'off', logger: quiet }),
+      /too old to convert images/,
+    );
+    // ee.jsonc saying "off", or not mentioning images, needs no probe.
+    for (const body of ['{ "images": "off" }\n', '{ "name": "x" }\n']) {
+      writeFileSync(join(s, 'ee.jsonc'), body);
+      const r = await deploySite({ dir: s, domain: 'example.com', dryRun: true, builderPath: fb.bin, cacheDir: join(d, 'c'), logger: quiet });
+      rmSync(r.workloadPath, { force: true });
+      assert.equal(r.hash, HASH);
+    }
+  });
+
   it('still packages a site without image options, passing the domain', async () => {
     const d = fresh('old-plain');
     const fb = fakeBuilder(d, { imageFlags: false });
@@ -302,6 +327,38 @@ describe('a cached latest ee-builder against its published checksum (#570)', () 
       String(url).endsWith('.sha256') ? new Response(digest('builder new')) : new Response(Buffer.from('tampered'));
     await assert.rejects(ensureBuilder(opts(d)), /published checksum mismatch/);
     assert.equal(existsSync(join(d, 'cache', cachedBuilderName('latest', key, key.split('-')[0]))), false);
+  });
+
+  it('keeps the binary another project pins when one project moves to a newer latest (4288790903)', async () => {
+    const d = fresh('shared');
+    const lockA = join(d, 'a.lock.json');
+    const lockB = join(d, 'b.lock.json');
+    serve('builder A');
+    const first = await ensureBuilder(opts(d, { lockfilePath: lockA }));
+    assert.equal(readFileSync(first, 'utf8'), 'builder A');
+    // A newer latest is published; project B, which pins nothing yet, moves to it.
+    serve('builder B');
+    assert.equal(readFileSync(await ensureBuilder(opts(d, { lockfilePath: lockB })), 'utf8'), 'builder B');
+    // Project A still pins release A, and still has it, without downloading.
+    const asked = serve('builder B');
+    const again = await ensureBuilder(opts(d, { lockfilePath: lockA, logger: { info() {}, warn() {} } }));
+    assert.equal(readFileSync(again, 'utf8'), 'builder A');
+    assert.deepEqual(asked.filter((u) => !u.endsWith('.sha256')), []);
+    // And B keeps B.
+    assert.equal(readFileSync(await ensureBuilder(opts(d, { lockfilePath: lockB })), 'utf8'), 'builder B');
+  });
+
+  it('keeps a pinned binary that an older cdn-cli cached under the plain name only', async () => {
+    const d = fresh('legacy');
+    cache(d, 'builder A');
+    const lockA = join(d, 'a.lock.json');
+    writeFileSync(lockA, JSON.stringify({ [`latest:${key}`]: digest('builder A') }));
+    serve('builder B');
+    assert.equal(readFileSync(await ensureBuilder(opts(d, { lockfilePath: join(d, 'b.lock.json') })), 'utf8'), 'builder B');
+    const asked = serve('builder B');
+    const again = await ensureBuilder(opts(d, { lockfilePath: lockA, logger: { info() {}, warn() {} } }));
+    assert.equal(readFileSync(again, 'utf8'), 'builder A');
+    assert.deepEqual(asked.filter((u) => !u.endsWith('.sha256')), []);
   });
 
   it('uses the cache when no checksum is published or reachable', async () => {
