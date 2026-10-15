@@ -26,7 +26,7 @@ import {
   rmSync,
   writeFileSync,
 } from 'node:fs';
-import { dirname, join } from 'node:path';
+import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 import {
@@ -324,6 +324,11 @@ export default function eeCdn(options = {}) {
           // edge's trailing-slash rule. On unless deploy.trailingSlash is
           // false (#396).
           trailingSlash: deploy.trailingSlash ?? true,
+          // The site deploy only: sub-workloads above are not served on the
+          // site's own URLs, so their images are not converted.
+          images: deploy.images ?? null,
+          imageHosts: deploy.imageHosts ?? [],
+          imageReport: deploy.imageReport ? resolve(projectRoot, deploy.imageReport) : null,
           builderPath: builderPath ? join(projectRoot, builderPath) : null,
           builderVersion,
           builderChecksum,

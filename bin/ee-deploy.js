@@ -14,7 +14,7 @@ import { parseArgs } from 'node:util';
 import { createRequire } from 'node:module';
 
 import { deploySite } from '../src/deploy.js';
-import { DEFAULT_CONTROL_PLANE } from '../src/builder.js';
+import { DEFAULT_CONTROL_PLANE, IMAGE_FORMATS } from '../src/builder.js';
 import { detectOutputDir } from '../src/detect.js';
 
 const { version } = createRequire(import.meta.url)('../package.json');
@@ -49,6 +49,14 @@ OPTIONS
   --trailing-slash       Redirect /about to /about/ (writes "# ee:trailing-slash on"
                          into _redirects; the site's own setting wins)
   --clean-urls           Serve /about from about.html (writes "# ee:clean-urls on")
+  --images <format>      Convert JPEG and PNG images to webp or avif while
+                         packaging, rewriting every reference to them; "off"
+                         overrides ee.jsonc. Needs an ee-builder with the
+                         -images flag (ee-builder -h lists it)
+  --image-host <host>    Another host the site is served from, so absolute
+                         URLs on it count as the site's own. Repeatable;
+                         --domain always counts
+  --image-report <path>  Write the conversion report as JSON to <path>
   --builder <path>       Use a local ee-builder instead of downloading one
   --builder-version <v>  Pin the ee-builder version instead of "latest".
                          Defaults to $EE_BUILDER_VERSION
@@ -69,6 +77,7 @@ ENVIRONMENT
 EXAMPLES
   ee-deploy ./public --domain blog.example.com --project proj_abc
   ee-deploy ./_site  --domain example.com --dry-run
+  ee-deploy ./output --domain blog.example.com --images webp --image-host www.example.com
 `;
 
 function fail(message, { usage = false } = {}) {
@@ -94,6 +103,9 @@ try {
       'builder-version': { type: 'string' },
       'trailing-slash': { type: 'boolean', default: false },
       'clean-urls': { type: 'boolean', default: false },
+      images: { type: 'string' },
+      'image-host': { type: 'string', multiple: true },
+      'image-report': { type: 'string' },
       lockfile: { type: 'string' },
       'cache-dir': { type: 'string' },
       'dry-run': { type: 'boolean', default: false },
@@ -134,6 +146,10 @@ if (positionals.length > 1) {
 const domain = opts.domain;
 if (!domain) fail('--domain is required — it is what the edge serves this workload as', { usage: true });
 
+if (opts.images !== undefined && !IMAGE_FORMATS.has(opts.images)) {
+  fail(`--images must be webp, avif or off (got "${opts.images}")`, { usage: true });
+}
+
 const level = opts.level === undefined ? 0 : Number(opts.level);
 if (!Number.isInteger(level) || level < 0 || level > 2) {
   fail(`--level must be 0, 1 or 2 (got "${opts.level}")`);
@@ -165,6 +181,9 @@ try {
     dir,
     trailingSlash: opts['trailing-slash'],
     cleanUrls: opts['clean-urls'],
+    images: opts.images ?? null,
+    imageHosts: opts['image-host'] ?? [],
+    imageReport: opts['image-report'] ?? null,
     builderVersion: opts['builder-version'] ?? process.env.EE_BUILDER_VERSION ?? 'latest',
     domain,
     name: opts.name,

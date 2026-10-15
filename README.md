@@ -25,6 +25,9 @@ ee-deploy [directory] --domain <host> [options]
   --level <0|1|2>          Encryption level. Default 0.
   --trailing-slash         Redirect /about to /about/.
   --clean-urls             Serve /about from about.html.
+  --images <webp|avif|off> Convert JPEG and PNG images while packaging.
+  --image-host <host>      Another host the site is served from (repeatable).
+  --image-report <path>    Write the conversion report as JSON.
   --builder-version <v>    Pin ee-builder instead of using "latest".
   --dry-run                Package but do not upload.
   --help                   Everything else.
@@ -33,6 +36,8 @@ ee-deploy [directory] --domain <host> [options]
 **The directory is optional.** Without it, `ee-deploy` finds the build output from the project itself (`package.json` dependencies or the generator's config file): Astro, Next.js static export, Nuxt, SvelteKit, Docusaurus, VitePress, Gatsby, Hexo, Eleventy, Hugo, Jekyll, MkDocs, mdBook, Sphinx, Zola and Vite. It prints what it chose (`Deploying ./dist (detected: Astro)`), and it never guesses: with no match, two matches, or no `index.html` in the folder, it stops and asks for the directory.
 
 **Routing flags.** Most generators link to `/about` while writing `about/index.html`; `--trailing-slash` makes the edge redirect `/about` to `/about/`. Generators that write `about.html` instead (Quartz, Observable Framework, vite-ssg, VitePress with `cleanUrls`) want `--clean-urls`. Each flag writes its line into the output's `_redirects` (creating the file if needed), so the setting travels with the bundle. A site whose own `_redirects` already sets the pragma keeps its value, `off` included.
+
+**Image conversion.** `--images webp` (or `avif`) has ee-builder convert the site's JPEG and PNG images while packaging and rewrite every page, stylesheet, feed, `_redirects` and `_headers` reference to the new names; an image it cannot rewrite every reference to stays as it is, with the reason in the report. Lossy formats store a re-encoded copy of each photo (PNGs are lossless by default). `--domain` always counts as the site's own host, so absolute URLs on it are rewritten; add any other host the site is served from with `--image-host`, once per host. ee-builder prints a readable report on stderr, and `--image-report` also writes the whole report as JSON. `--images off` overrides an `"images"` setting in the site's `ee.jsonc`, which otherwise applies on its own. Image options need an ee-builder with the `-images` flag (`ee-builder -h` lists it); the CLI checks before packaging and stops with a message if the builder is older. The ee-builder release published before image conversion does not have it: until a newer one is published, build ee-builder from source and pass it with `--builder`. See [docs/image-conversion.md](https://github.com/evolving-edge/ee-cdn/blob/main/docs/image-conversion.md) in ee-cdn for what converts, what is left alone and why.
 
 **Pin ee-builder in CI.** By default the CLI downloads the latest `ee-builder` and records its checksum in `.ee-builder-lock.json`. With "latest" plus a committed lockfile, every new builder release fails the deploy with a checksum mismatch, by design. Pin a version instead (`--builder-version` or `EE_BUILDER_VERSION`, using the label from the "Upload ee-builder to CDN" run summary), and commit the lockfile.
 
@@ -115,6 +120,9 @@ you find out in production, and warns on `trailingSlash: 'never'`.
 | `deploy.projectId` | string | — | Required if your deploy token is project-scoped. |
 | `deploy.buildId` | string | — | Applies the Build Config's server-side defaults. |
 | `deploy.trailingSlash` | boolean | `true` | Writes `# ee:trailing-slash on` into `dist/_redirects`, so a bare `/about` redirects to `/about/` instead of 404ing. Set `false` to leave `_redirects` alone. |
+| `deploy.images` | `'webp' \| 'avif' \| 'off'` | — | Convert the site's JPEG and PNG images while packaging; see "Image conversion". Unset, `ee.jsonc` decides. |
+| `deploy.imageHosts` | string[] | `[]` | Other hosts the site is served from; `deploy.domain` always counts. |
+| `deploy.imageReport` | string | — | Write the conversion report as JSON here, relative to the project root. |
 | `controlPlane` | string | `https://cp.3dge.app` | |
 | `token` | string | `$EE_CDN_TOKEN` | |
 | `builderPath` | string | — | Use a local `ee-builder` instead of downloading. |
@@ -190,11 +198,9 @@ each key through your own script before the SDK's auto-init runs.
 
 ## ee-builder integrity
 
-The control plane publishes a `.sha256` sidecar for `edge-node` but not for
-`ee-builder`. Until it does, the first download's digest is recorded in
-`.ee-builder-lock.json` and every later download must match it. **Commit that
-lockfile** so CI verifies the same binary you built against. Pass
-`builderChecksum` to pin a digest explicitly instead.
+The first download's digest is recorded in `.ee-builder-lock.json` and every later download must match it. **Commit that lockfile** so CI verifies the same binary you built against. Pass `builderChecksum` to pin a digest explicitly instead. A pin always wins.
+
+The control plane also publishes a `.sha256` beside each ee-builder binary. A fresh download must match it. For `latest`, which moves, it is fetched on every run: a cached copy that no longer matches is stale and is downloaded again, unless the lockfile pins it, in which case the pinned copy is kept and a warning names the newer release and the lockfile entry to delete to move to it. Without the network, or for a release published before the `.sha256` existed, the cache and the lockfile decide as before.
 
 Published targets are `linux/amd64`, `linux/arm64`, `darwin/arm64`,
 `darwin/amd64` and `windows/amd64`. On anything else, build from source and

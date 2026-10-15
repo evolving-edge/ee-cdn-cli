@@ -30,6 +30,20 @@ export interface EEDeployOptions {
   projectName?: string;
   /** Display name for the workload. @default deploy.domain */
   name?: string;
+  /**
+   * Convert the site's JPEG and PNG images to WebP or AVIF while packaging,
+   * rewriting every reference to them. `'off'` overrides `ee.jsonc`. Unset,
+   * `ee.jsonc` alone decides. Needs an ee-builder with the `-images` flag
+   * (`ee-builder -h` lists it). See docs/image-conversion.md in ee-cdn.
+   */
+  images?: 'webp' | 'avif' | 'off';
+  /**
+   * Other hosts the site is served from, so absolute URLs on them count as
+   * the site's own. `domain` always counts.
+   */
+  imageHosts?: string[];
+  /** Write the conversion report as JSON here, relative to the project root. */
+  imageReport?: string;
 }
 
 export interface EEOptions {
