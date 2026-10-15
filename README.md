@@ -83,7 +83,7 @@ deployed site is missing files. To check, compare the hash the integration logs
 against an independent one:
 
 ```bash
-ee-builder -src dist -hash-only    # must equal the logged "Content hash"
+ee-builder -src dist -out /tmp/check.ee | grep 'Content hash'    # must equal the logged "Content hash"
 ```
 
 ## Two required Astro settings
