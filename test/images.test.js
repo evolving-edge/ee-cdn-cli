@@ -130,6 +130,13 @@ describe('a builder too old for image options (#570)', () => {
     requireImageSupport(fakeBuilder(fresh('v')).bin, 'HINT');
   });
 
+  it('reports a builder that cannot run, rather than calling it too old', () => {
+    const d = fresh('noexec');
+    const bin = join(d, 'ee-builder');
+    writeFileSync(bin, '#!/bin/sh\necho "  -images string"\n', { mode: 0o644 });
+    assert.throws(() => requireImageSupport(bin, 'hint'), (e) => /Could not run ee-builder/.test(e.message) && !/too old/.test(e.message));
+  });
+
   it('refuses before packaging when image options are given', async () => {
     const d = fresh('old');
     const fb = fakeBuilder(d, { imageFlags: false });

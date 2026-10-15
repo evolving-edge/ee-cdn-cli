@@ -321,6 +321,9 @@ export function builderImageFlags(builderPath) {
     stdio: ['ignore', 'pipe', 'pipe'],
     timeout: 30000,
   });
+  // A builder that cannot run at all (not executable, timed out) is that,
+  // not one without image flags.
+  if (r.error) throw new Error(`Could not run ee-builder at ${builderPath} to check its flags: ${r.error.message}`);
   const usage = `${r.stdout ?? ''}${r.stderr ?? ''}`;
   return IMAGE_FLAGS.filter((f) => new RegExp(`^\\s+${f}\\b`, 'm').test(usage));
 }
