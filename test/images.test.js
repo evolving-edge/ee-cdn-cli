@@ -164,7 +164,7 @@ describe('a builder too old for image options (#570)', () => {
     writeFileSync(join(s, 'ee.jsonc'), '{\n  // photos\n  "images": "webp",\n}\n');
     await assert.rejects(
       deploySite({ dir: s, domain: 'example.com', dryRun: true, builderPath: fb.bin, cacheDir: join(d, 'c'), logger: quiet }),
-      /ee\.jsonc line 3 turns image conversion on, but ee-builder .* too old.*images: "off"/s,
+      /ee\.jsonc line 3 turns image conversion on, but ee-builder .* too old.*set "images": "off" in ee\.jsonc \(or remove it\) and pass no image option/s,
     );
     assert.equal(fb.args(), null, 'the old builder must not have been run to package');
     // "off" from an option overrides ee.jsonc; an old builder then fails on

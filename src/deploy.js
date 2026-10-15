@@ -117,7 +117,7 @@ export async function deploySite({
   } else if (configLine) {
     requireImageSupport(
       bin,
-      `${hint} Or deploy without converting with images: "off" (--images off).`,
+      `${hint} To deploy with this builder without converting, set "images": "off" in ee.jsonc (or remove it) and pass no image option: --images is itself a flag this builder does not have.`,
       `${join(src, 'ee.jsonc')} line ${configLine} turns image conversion on, but `,
     );
   }
