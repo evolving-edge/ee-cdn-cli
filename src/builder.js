@@ -21,6 +21,9 @@ import { dirname, isAbsolute, join, resolve } from 'node:path';
 
 export const DEFAULT_CONTROL_PLANE = 'https://cp.3dge.app';
 
+/** The cache lookup's file reads; a test swaps them to interleave another deploy. */
+export const cacheFs = { existsSync, readFileSync };
+
 /**
  * ee-builder is published for these only. Must match the target loops in
  * .github/workflows/upload-ee-builder.yml.
@@ -134,9 +137,11 @@ export async function ensureBuilder({
   };
   const want = expected ?? published ?? null;
   if (want) {
-    for (const p of [digestPath(want), binPath]) {
-      if (!existsSync(p)) continue;
-      const bytes = readFileSync(p);
+    // The digest name is looked at again last: another deploy may move the
+    // plain-name copy there between the first two looks.
+    for (const p of [digestPath(want), binPath, digestPath(want)]) {
+      if (!cacheFs.existsSync(p)) continue;
+      const bytes = cacheFs.readFileSync(p);
       if (sha256(bytes) === want) {
         if (expected && published && published !== expected) {
           logger.warn(
@@ -251,6 +256,9 @@ function writeLock(path, key, version, digest, existed, logger) {
   }
 }
 
+/** A host name, with a port if it needs one: normalizeImageHost in ee-builder/ee_config.go. */
+const HOST_RE = /^[a-z0-9]([a-z0-9-]*[a-z0-9])?(\.[a-z0-9]([a-z0-9-]*[a-z0-9])?)*(:[0-9]{1,5})?$/;
+
 /** Image formats ee-builder converts to, and "off" to override ee.jsonc. */
 export const IMAGE_FORMATS = new Set(['webp', 'avif', 'off']);
 
@@ -270,8 +278,10 @@ export function imageOptions({ images = null, imageHosts = [], imageReport = nul
     throw new Error(`images must be webp, avif or off (got "${images}")`);
   }
   for (const h of hosts) {
-    // Joined with commas for -image-hosts, so one host cannot hold one.
-    if (/[\s,/]/.test(h)) {
+    // ee-builder's rule, so a host it would refuse fails here, before an
+    // Astro build packages anything; it also keeps commas out, since the
+    // hosts are joined with them for -image-hosts.
+    if (!HOST_RE.test(h.toLowerCase().replace(/\.$/, ''))) {
       throw new Error(`image host "${h}" is not a host name; give the host alone, as in www.example.com`);
     }
   }

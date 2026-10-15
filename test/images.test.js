@@ -11,7 +11,7 @@
 import assert from 'node:assert/strict';
 import { execFileSync, spawnSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, renameSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
@@ -20,6 +20,7 @@ import { after, afterEach, describe, it } from 'node:test';
 import {
   builderArgs,
   builderImageFlags,
+  cacheFs,
   cachedBuilderName,
   ensureBuilder,
   imageOptions,
@@ -112,6 +113,8 @@ describe('ee-builder arguments for image conversion (#570)', () => {
     assert.throws(() => imageOptions({ images: 'jpegxl' }), /webp, avif or off/);
     assert.throws(() => imageOptions({ imageHosts: ['a.example,b.example'] }), /not a host name/);
     assert.throws(() => imageOptions({ imageHosts: ['https://a.example/'] }), /not a host name/);
+    assert.throws(() => imageOptions({ imageHosts: ['cdn.example.com:abc'] }), /not a host name/);
+    assert.deepEqual(imageOptions({ imageHosts: ['CDN.Example.com.', 'cdn.example.com:8443'] }).hosts, ['CDN.Example.com.', 'cdn.example.com:8443']);
     assert.equal(imageOptions({ imageReport: 'out/r.json' }).report, resolve(process.cwd(), 'out/r.json'));
   });
 });
@@ -266,6 +269,7 @@ describe('Astro checks the site image options before any workload is built (#570
     const eeCdn = (await import('../src/astro.js')).default;
     for (const deploy of [
       { domain: 'example.com', imageHosts: ['a.example,b.example'] },
+      { domain: 'example.com', imageHosts: ['cdn.example.com:abc'] },
       { domain: 'example.com', images: 'jpegxl' },
     ]) {
       const integration = eeCdn({ deploy, builderPath: 'fake-ee-builder', dryRun: true });
@@ -424,6 +428,34 @@ describe('a cached latest ee-builder against its published checksum (#570)', () 
     const lockZ = join(d, 'z.lock.json');
     const used = readFileSync(await ensureBuilder(opts(d, { lockfilePath: lockZ })), 'utf8');
     assert.equal(JSON.parse(readFileSync(lockZ, 'utf8'))[`latest:${key}`], digest(used));
+  });
+
+  it('finds a pinned copy that another deploy moves to its digest name mid-lookup (4288968367)', async () => {
+    const d = fresh('race');
+    const p = cache(d, 'builder A'); // an older cdn-cli's cache: the plain name only
+    const lockA = join(d, 'a.lock.json');
+    writeFileSync(lockA, JSON.stringify({ [`latest:${key}`]: digest('builder A') }));
+    const asked = serve('builder B');
+    const realRead = cacheFs.readFileSync;
+    let moved = false;
+    cacheFs.readFileSync = (path, ...rest) => {
+      if (!moved && path === p) {
+        // Another deploy, between this one's first two looks, keeps A under
+        // its digest and puts B under the plain name.
+        moved = true;
+        renameSync(p, join(d, 'cache', cachedBuilderName(`latest@${digest('builder A').slice(0, 16)}`, key, key.split('-')[0])));
+        writeFileSync(p, 'builder B', { mode: 0o755 });
+      }
+      return realRead(path, ...rest);
+    };
+    try {
+      const got = await ensureBuilder(opts(d, { lockfilePath: lockA, logger: { info() {}, warn() {} } }));
+      assert.equal(readFileSync(got, 'utf8'), 'builder A');
+    } finally {
+      cacheFs.readFileSync = realRead;
+    }
+    assert.ok(moved, 'the interleaving happened');
+    assert.deepEqual(asked.filter((u) => !u.endsWith('.sha256')), [], 'no download');
   });
 
   it('uses the cache when no checksum is published or reachable', async () => {
