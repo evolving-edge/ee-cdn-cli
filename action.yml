@@ -121,10 +121,20 @@ runs:
         DEPLOY_DRY_RUN: ${{ inputs.dry-run }}
         ACTION_PATH: ${{ github.action_path }}
       run: |
-        if [ "$DEPLOY_LEVEL" = "1" ]; then
-          echo "::error::level 1 is not supported here: its key is made for each build and must reach only the browser, and a CI run has no safe place to give it to you. Use level 0 or 2, or deploy Level 1 sites from your own machine."
-          exit 1
-        fi
+        # Exactly "0" or "2". ee-deploy reads the level with Number(), so
+        # "01", "1.0" or " 1 " would otherwise reach it as Level 1.
+        case "$DEPLOY_LEVEL" in
+          0|2) ;;
+          *)
+            if [ "$(printf '%s' "$DEPLOY_LEVEL" | tr -d '[:space:]')" != "" ] &&
+               [ "$(node -e 'process.stdout.write(String(Number(process.argv[1])))' "$DEPLOY_LEVEL")" = "1" ]; then
+              echo "::error::level 1 is not supported here: its key is made for each build and must reach only the browser, and a CI run has no safe place to give it to you. Use level 0 or 2, or deploy Level 1 sites from your own machine."
+            else
+              echo "::error::level must be 0 or 2 (got \"$DEPLOY_LEVEL\")."
+            fi
+            exit 1
+            ;;
+        esac
         args=(--domain "$DEPLOY_DOMAIN" --level "$DEPLOY_LEVEL")
         [ -n "$DEPLOY_NAME" ] && args+=(--name "$DEPLOY_NAME")
         [ "$DEPLOY_TRAILING_SLASH" = "true" ] && args+=(--trailing-slash)

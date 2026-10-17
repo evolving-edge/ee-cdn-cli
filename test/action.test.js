@@ -123,6 +123,21 @@ describe('action.yml', () => {
     assert.match(r.stdout, /::error::level 1 is not supported/);
   });
 
+  it('refuses every other spelling of a level, Level 1 ones included', () => {
+    for (const level of ['01', '1.0', ' 1 ', '1e0', '0x1']) {
+      const r = runDeploy({ DEPLOY_LEVEL: level });
+      assert.notEqual(r.status, 0, `level "${level}" was accepted`);
+      assert.equal(r.argv, null, `ee-deploy ran for level "${level}"`);
+      assert.match(r.stdout, /::error::level 1 is not supported/, `level "${level}"`);
+    }
+    for (const level of ['', '3', '00', '2.0', 'two']) {
+      const r = runDeploy({ DEPLOY_LEVEL: level });
+      assert.notEqual(r.status, 0, `level "${level}" was accepted`);
+      assert.equal(r.argv, null, `ee-deploy ran for level "${level}"`);
+      assert.match(r.stdout, /::error::level must be 0 or 2/, `level "${level}"`);
+    }
+  });
+
   it('does not expand a glob in image-hosts', () => {
     writeFileSync(join(scratch, 'should-not-appear'), '');
     const r = runDeploy({ DEPLOY_IMAGE_HOSTS: '*' });
