@@ -7,7 +7,7 @@ to the control plane. Edge nodes resolve your domain to that content hash and
 serve it, sourcing bytes from peer nodes in-region before falling back to
 origin.
 
-Two ways in: a CLI for any generator, and an Astro integration.
+Three ways in: a CLI for any generator, a GitHub Action that wraps it, and an Astro integration.
 
 ## CLI
 
@@ -50,41 +50,36 @@ point `ee-deploy` at that folder.
 
 ## GitHub Action
 
-For CI pipelines that don't already have Node — Hugo, Zola, Jekyll, Pelican,
-mdBook, Sphinx, MkDocs, Quarto and others typically run on Go/Ruby/Python/Rust
-images — `uses:` this action and it brings its own:
+For CI that has no Node of its own (Hugo, Zola, Jekyll, Pelican, mdBook, Sphinx, MkDocs, Quarto and others usually build on Go, Ruby, Python or Rust images), this repository is also a GitHub Action. It runs `ee-deploy` from this package and brings its own Node, so the workflow needs no `actions/setup-node` step and no `npm install`:
 
 ```yaml
 - uses: actions/checkout@v5
-- name: Build with Hugo
-  uses: peaceiris/actions-hugo@v3
+- uses: peaceiris/actions-hugo@v3
   with:
     hugo-version: 'latest'
 - run: hugo --minify
-- uses: evolving-edge/ee-cdn-cli@main
+- uses: evolving-edge/ee-cdn-cli@vX.Y.Z
   with:
     directory: public
     domain: blog.example.com
     project: proj_abc
     token: ${{ secrets.EE_CDN_TOKEN }}
+    builder-version: 'X.Y.Z'
 ```
 
-It can also run a Tailwind CSS build first, for generators that have no build
-step of their own for it:
+Replace `vX.Y.Z` with a release tag from [the tags list](https://github.com/evolving-edge/ee-cdn-cli/tags). Referring to `@main` instead means every change to this repository changes your deploys the moment it lands. For the same reason, set `builder-version` so a new ee-builder release can't change what a re-run uploads.
 
-```yaml
-- uses: evolving-edge/ee-cdn-cli@main
-  with:
-    directory: public
-    domain: blog.example.com
-    token: ${{ secrets.EE_CDN_TOKEN }}
-    tailwind-input: src/style.css
-    tailwind-output: public/style.css
-```
+Every input is described in `action.yml`; they match the CLI's flags. The ones that differ from the CLI:
 
-See `action.yml` for every input — they mirror the CLI's own flags.
-This wraps `ee-deploy` directly (no npm install, no separate Node setup step
-in the calling workflow); it does not package or run any other build tool.
+- **`working-directory`**: where the project is, when it isn't at the root of the repository. Output-folder detection and relative paths start there.
+- **`dry-run: true`**: packages the site without uploading it, and needs no token. Use it to test a workflow before giving it a deploy token.
+- **`image-hosts`**: the CLI's repeatable `--image-host`, as one input separated by spaces, commas or new lines.
+- **`level`**: 0 or 2. Level 1 is refused, because its key is made for each build and must reach only the browser; a CI run has no safe place to give it to you.
+- **`url`** (output): `https://<domain>`, once the upload is accepted. Empty on a dry run.
+
+**Node.** If the runner's Node is 22.12 or later, the action uses it and changes nothing. Otherwise it installs Node 22.12 with `actions/setup-node`, and that Node stays first on `PATH` for the rest of the job. If a later step needs a different Node, set it up after this action.
+
+The action packages and uploads only. It runs no other build tool: build the site, including any CSS step such as Tailwind, in the steps before it.
 
 ## Astro
 
