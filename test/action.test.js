@@ -1,5 +1,6 @@
 import assert from 'node:assert/strict';
 import { execFileSync, spawnSync } from 'node:child_process';
+import { parseArgs } from 'node:util';
 import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -91,14 +92,14 @@ describe('action.yml', () => {
     });
     assert.equal(r.status, 0, r.stdout);
     assert.deepEqual(r.argv, [
-      '--domain', 'blog.example.com', '--level', '2',
-      '--name', 'Blog',
+      '--domain=blog.example.com', '--level=2',
+      '--name=Blog',
       '--trailing-slash', '--clean-urls',
-      '--images', 'webp',
-      '--image-host', 'www.example.com', '--image-host', 'cdn.example.com', '--image-host', 'old.example.com',
-      '--image-report', 'report.json',
-      '--builder-version', '0.3.1',
-      'public',
+      '--images=webp',
+      '--image-host=www.example.com', '--image-host=cdn.example.com', '--image-host=old.example.com',
+      '--image-report=report.json',
+      '--builder-version=0.3.1',
+      '--', 'public',
     ]);
     assert.equal(r.output, 'url=https://blog.example.com\n');
   });
@@ -106,7 +107,7 @@ describe('action.yml', () => {
   it('passes only the domain and level when nothing else is set', () => {
     const r = runDeploy({ DEPLOY_TRAILING_SLASH: 'false', DEPLOY_CLEAN_URLS: 'false', DEPLOY_DRY_RUN: 'false' });
     assert.equal(r.status, 0, r.stdout);
-    assert.deepEqual(r.argv, ['--domain', 'blog.example.com', '--level', '0']);
+    assert.deepEqual(r.argv, ['--domain=blog.example.com', '--level=0']);
   });
 
   it('a dry run passes --dry-run and sets no url', () => {
@@ -135,10 +136,32 @@ describe('action.yml', () => {
     }
   });
 
+  it('keeps option-shaped inputs as values', () => {
+    const r = runDeploy({
+      DEPLOY_DIRECTORY: '--control-plane=https://evil.example',
+      DEPLOY_NAME: '--dry-run',
+      DEPLOY_IMAGE_HOSTS: '--level=1',
+    });
+    assert.equal(r.status, 0, r.stdout);
+    // ee-deploy parses with node:util parseArgs: "--x=value" is always a value,
+    // and everything after "--" is a positional.
+    const { values, positionals } = parseArgs({
+      args: r.argv,
+      allowPositionals: true,
+      strict: false,
+    });
+    assert.deepEqual(positionals, ['--control-plane=https://evil.example']);
+    assert.equal(values.name, '--dry-run');
+    assert.equal(values['image-host'], '--level=1');
+    assert.equal(values.level, '0');
+    assert.equal(values['control-plane'], undefined);
+    assert.equal(values['dry-run'], undefined);
+  });
+
   it('does not expand a glob in image-hosts', () => {
     writeFileSync(join(scratch, 'should-not-appear'), '');
     const r = runDeploy({ DEPLOY_IMAGE_HOSTS: '*' });
     assert.equal(r.status, 0, r.stdout);
-    assert.deepEqual(r.argv.slice(-2), ['--image-host', '*']);
+    assert.deepEqual(r.argv.slice(-1), ['--image-host=*']);
   });
 });

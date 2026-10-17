@@ -131,19 +131,21 @@ runs:
             exit 1
             ;;
         esac
-        args=(--domain "$DEPLOY_DOMAIN" --level "$DEPLOY_LEVEL")
-        [ -n "$DEPLOY_NAME" ] && args+=(--name "$DEPLOY_NAME")
+        args=("--domain=$DEPLOY_DOMAIN" "--level=$DEPLOY_LEVEL")
+        [ -n "$DEPLOY_NAME" ] && args+=("--name=$DEPLOY_NAME")
         [ "$DEPLOY_TRAILING_SLASH" = "true" ] && args+=(--trailing-slash)
         [ "$DEPLOY_CLEAN_URLS" = "true" ] && args+=(--clean-urls)
-        [ -n "$DEPLOY_IMAGES" ] && args+=(--images "$DEPLOY_IMAGES")
+        [ -n "$DEPLOY_IMAGES" ] && args+=("--images=$DEPLOY_IMAGES")
         IFS=$' \t\n,' read -r -d '' -a hosts <<< "$DEPLOY_IMAGE_HOSTS" || true
         for host in "${hosts[@]}"; do
-          args+=(--image-host "$host")
+          args+=("--image-host=$host")
         done
-        [ -n "$DEPLOY_IMAGE_REPORT" ] && args+=(--image-report "$DEPLOY_IMAGE_REPORT")
-        [ -n "$DEPLOY_BUILDER_VERSION" ] && args+=(--builder-version "$DEPLOY_BUILDER_VERSION")
+        [ -n "$DEPLOY_IMAGE_REPORT" ] && args+=("--image-report=$DEPLOY_IMAGE_REPORT")
+        [ -n "$DEPLOY_BUILDER_VERSION" ] && args+=("--builder-version=$DEPLOY_BUILDER_VERSION")
         [ "$DEPLOY_DRY_RUN" = "true" ] && args+=(--dry-run)
-        [ -n "$DEPLOY_DIRECTORY" ] && args+=("$DEPLOY_DIRECTORY")
+        [ -n "$DEPLOY_DIRECTORY" ] && args+=(-- "$DEPLOY_DIRECTORY")
+        # Every value is joined to its flag with "=" and the directory follows "--", so
+        # an input that starts with "-" is always data, never an option.
         node "$ACTION_PATH/bin/ee-deploy.js" "${args[@]}"
         if [ "$DEPLOY_DRY_RUN" != "true" ]; then
           echo "url=https://$DEPLOY_DOMAIN" >> "$GITHUB_OUTPUT"
