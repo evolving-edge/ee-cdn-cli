@@ -120,21 +120,18 @@ describe('action.yml', () => {
     const r = runDeploy({ DEPLOY_LEVEL: '1' });
     assert.notEqual(r.status, 0);
     assert.equal(r.argv, null, 'ee-deploy ran');
-    assert.match(r.stdout, /::error::level 1 is not supported/);
+    assert.match(r.stdout, /Level 1 is not supported here/);
   });
 
-  it('refuses every other spelling of a level, Level 1 ones included', () => {
-    for (const level of ['01', '1.0', ' 1 ', '1e0', '0x1']) {
+  it('refuses every level but "0" and "2", without passing it to anything', () => {
+    const levels = ['01', '1.0', ' 1 ', '1e0', '0x1', '', '3', '00', '2.0', 'two',
+      '--eval=process.stdout.write("INJECTED")', '$(echo INJECTED)', '`echo INJECTED`'];
+    for (const level of levels) {
       const r = runDeploy({ DEPLOY_LEVEL: level });
-      assert.notEqual(r.status, 0, `level "${level}" was accepted`);
-      assert.equal(r.argv, null, `ee-deploy ran for level "${level}"`);
-      assert.match(r.stdout, /::error::level 1 is not supported/, `level "${level}"`);
-    }
-    for (const level of ['', '3', '00', '2.0', 'two']) {
-      const r = runDeploy({ DEPLOY_LEVEL: level });
-      assert.notEqual(r.status, 0, `level "${level}" was accepted`);
-      assert.equal(r.argv, null, `ee-deploy ran for level "${level}"`);
-      assert.match(r.stdout, /::error::level must be 0 or 2/, `level "${level}"`);
+      assert.notEqual(r.status, 0, `level ${JSON.stringify(level)} was accepted`);
+      assert.equal(r.argv, null, `ee-deploy ran for level ${JSON.stringify(level)}`);
+      assert.match(r.stdout, /::error::level must be 0 or 2/, `level ${JSON.stringify(level)}`);
+      assert.doesNotMatch(r.stdout, /^INJECTED/m, `level ${JSON.stringify(level)} was executed`);
     }
   });
 
