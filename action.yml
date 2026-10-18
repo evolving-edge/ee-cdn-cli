@@ -1,0 +1,152 @@
+name: 'Deploy to Evolving Edge CDN'
+description: >-
+  Publish a built static site to the Evolving Edge CDN as an .ee workload.
+  Wraps ee-deploy; the calling workflow needs no Node setup of its own.
+branding:
+  icon: 'upload-cloud'
+  color: 'purple'
+
+inputs:
+  directory:
+    description: >-
+      Directory to deploy (e.g. ./public, ./dist, ./_site), relative to
+      working-directory. If omitted, ee-deploy detects the build output from
+      the project itself.
+    required: false
+  working-directory:
+    description: >-
+      Where the project is, relative to the repository root. Output-folder
+      detection and every relative path are resolved from here.
+    required: false
+    default: '.'
+  domain:
+    description: 'Hostname the edge serves this workload as.'
+    required: true
+  token:
+    description: 'Deploy token (portal -> Workload -> Deploy Tokens). Pass from a secret.'
+    required: false
+  project:
+    description: 'Project ID (proj_...). Required if the token is project-scoped.'
+    required: false
+  level:
+    description: >-
+      Encryption level: 0 (public) or 2 (gateway-decrypted). Level 1 is
+      refused: its key is generated for each build and only the browser may
+      hold it, so a CI run has nowhere safe to hand it to you.
+    required: false
+    default: '0'
+  name:
+    description: 'Workload name. Defaults to the domain.'
+    required: false
+  trailing-slash:
+    description: 'Redirect /about to /about/.'
+    required: false
+    default: 'false'
+  clean-urls:
+    description: 'Serve /about from about.html.'
+    required: false
+    default: 'false'
+  images:
+    description: >-
+      Convert JPEG and PNG images to webp or avif while packaging, rewriting
+      every reference to them. "off" overrides ee.jsonc. Leave empty to
+      follow ee.jsonc.
+    required: false
+  image-hosts:
+    description: >-
+      Other hosts the site is served from, so absolute URLs on them count as
+      the site's own. Separate with spaces, commas or new lines. The domain
+      always counts.
+    required: false
+  image-report:
+    description: 'Write the image conversion report as JSON to this path.'
+    required: false
+  builder-version:
+    description: >-
+      Pin the ee-builder version instead of "latest", so a release of the
+      builder cannot change your deploys between runs.
+    required: false
+  dry-run:
+    description: 'Package the site but do not upload it. No token is needed.'
+    required: false
+    default: 'false'
+
+outputs:
+  url:
+    description: 'The deployed site URL. Empty on a dry run.'
+    value: ${{ steps.deploy.outputs.url }}
+
+runs:
+  using: 'composite'
+  steps:
+    # ee-deploy needs Node 22.12 or later. Use the runner's Node when it is
+    # new enough, so the action changes nothing for the steps after it. Only
+    # an older or missing Node is replaced, and setup-node's change to PATH
+    # then lasts for the rest of the job.
+    - name: Check Node.js
+      id: node
+      shell: bash
+      run: |
+        if command -v node >/dev/null 2>&1 &&
+           node -e 'const [a,b]=process.versions.node.split(".").map(Number);process.exit(a>22||(a===22&&b>=12)?0:1)'; then
+          echo "Using the runner's Node $(node --version)."
+          echo "ok=true" >> "$GITHUB_OUTPUT"
+        else
+          echo "ok=false" >> "$GITHUB_OUTPUT"
+        fi
+
+    - name: Set up Node.js
+      if: steps.node.outputs.ok != 'true'
+      uses: actions/setup-node@v4
+      with:
+        node-version: '22.12'
+
+    - name: Deploy to Evolving Edge CDN
+      id: deploy
+      shell: bash
+      working-directory: ${{ inputs.working-directory }}
+      env:
+        EE_CDN_TOKEN: ${{ inputs.token }}
+        EE_CDN_PROJECT_ID: ${{ inputs.project }}
+        DEPLOY_DIRECTORY: ${{ inputs.directory }}
+        DEPLOY_DOMAIN: ${{ inputs.domain }}
+        DEPLOY_LEVEL: ${{ inputs.level }}
+        DEPLOY_NAME: ${{ inputs.name }}
+        DEPLOY_TRAILING_SLASH: ${{ inputs.trailing-slash }}
+        DEPLOY_CLEAN_URLS: ${{ inputs.clean-urls }}
+        DEPLOY_IMAGES: ${{ inputs.images }}
+        DEPLOY_IMAGE_HOSTS: ${{ inputs.image-hosts }}
+        DEPLOY_IMAGE_REPORT: ${{ inputs.image-report }}
+        DEPLOY_BUILDER_VERSION: ${{ inputs.builder-version }}
+        DEPLOY_DRY_RUN: ${{ inputs.dry-run }}
+        ACTION_PATH: ${{ github.action_path }}
+      run: |
+        # Exactly "0" or "2", compared as text and passed to nothing else.
+        # ee-deploy reads the level with Number(), so "01", "1.0" or " 1 "
+        # would reach it as Level 1.
+        case "$DEPLOY_LEVEL" in
+          0|2) ;;
+          *)
+            echo "::error::level must be 0 or 2, written exactly so. Level 1 is not supported here: its key is made for each build and must reach only the browser, and a CI run has no safe place to give it to you. Deploy Level 1 sites from your own machine."
+            exit 1
+            ;;
+        esac
+        args=("--domain=$DEPLOY_DOMAIN" "--level=$DEPLOY_LEVEL")
+        [ -n "$DEPLOY_NAME" ] && args+=("--name=$DEPLOY_NAME")
+        [ "$DEPLOY_TRAILING_SLASH" = "true" ] && args+=(--trailing-slash)
+        [ "$DEPLOY_CLEAN_URLS" = "true" ] && args+=(--clean-urls)
+        [ -n "$DEPLOY_IMAGES" ] && args+=("--images=$DEPLOY_IMAGES")
+        IFS=$' \t\n,' read -r -d '' -a hosts <<< "$DEPLOY_IMAGE_HOSTS" || true
+        for host in "${hosts[@]}"; do
+          args+=("--image-host=$host")
+        done
+        [ -n "$DEPLOY_IMAGE_REPORT" ] && args+=("--image-report=$DEPLOY_IMAGE_REPORT")
+        [ -n "$DEPLOY_BUILDER_VERSION" ] && args+=("--builder-version=$DEPLOY_BUILDER_VERSION")
+        [ "$DEPLOY_DRY_RUN" = "true" ] && args+=(--dry-run)
+        [ -n "$DEPLOY_DIRECTORY" ] && args+=(-- "$DEPLOY_DIRECTORY")
+        # Every value is joined to its flag with "=" and the directory follows "--", so
+        # an input that starts with "-" is always data, never an option.
+        node "$ACTION_PATH/bin/ee-deploy.js" "${args[@]}"
+        if [ "$DEPLOY_DRY_RUN" != "true" ]; then
+          echo "url=https://$DEPLOY_DOMAIN" >> "$GITHUB_OUTPUT"
+        fi

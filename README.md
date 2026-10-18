@@ -7,7 +7,7 @@ to the control plane. Edge nodes resolve your domain to that content hash and
 serve it, sourcing bytes from peer nodes in-region before falling back to
 origin.
 
-Two ways in: a CLI for any generator, and an Astro integration.
+Three ways in: a CLI for any generator, a GitHub Action that wraps it, and an Astro integration.
 
 ## CLI
 
@@ -25,6 +25,9 @@ ee-deploy [directory] --domain <host> [options]
   --level <0|1|2>          Encryption level. Default 0.
   --trailing-slash         Redirect /about to /about/.
   --clean-urls             Serve /about from about.html.
+  --images <webp|avif|off> Convert JPEG and PNG images while packaging.
+  --image-host <host>      Another host the site is served from (repeatable).
+  --image-report <path>    Write the conversion report as JSON.
   --builder-version <v>    Pin ee-builder instead of using "latest".
   --dry-run                Package but do not upload.
   --help                   Everything else.
@@ -34,6 +37,8 @@ ee-deploy [directory] --domain <host> [options]
 
 **Routing flags.** Most generators link to `/about` while writing `about/index.html`; `--trailing-slash` makes the edge redirect `/about` to `/about/`. Generators that write `about.html` instead (Quartz, Observable Framework, vite-ssg, VitePress with `cleanUrls`) want `--clean-urls`. Each flag writes its line into the output's `_redirects` (creating the file if needed), so the setting travels with the bundle. A site whose own `_redirects` already sets the pragma keeps its value, `off` included.
 
+**Image conversion.** `--images webp` (or `avif`) has ee-builder convert the site's JPEG and PNG images while packaging and rewrite every page, stylesheet, feed, `_redirects` and `_headers` reference to the new names; an image it cannot rewrite every reference to stays as it is, with the reason in the report. Lossy formats store a re-encoded copy of each photo (PNGs are lossless by default). `--domain` always counts as the site's own host, so absolute URLs on it are rewritten; add any other host the site is served from with `--image-host`, once per host. ee-builder prints a readable report on stderr, and `--image-report` also writes the whole report as JSON. `--images off` overrides an `"images"` setting in the site's `ee.jsonc`, which otherwise applies on its own. Image options need an ee-builder with the `-images` flag (`ee-builder -h` lists it); the CLI checks before packaging and stops with a message if the builder is older. It checks too when no option is given but the site's `ee.jsonc` turns conversion on (`"images"` set to `webp`, `avif` or an object), since an older builder would ignore that setting and package the images unconverted. To deploy with such a builder without converting, set `"images": "off"` in `ee.jsonc` (or remove it) and pass no image option, since `--images off` is itself a flag an older builder lacks. The ee-builder release published before image conversion does not have it: until a newer one is published, build ee-builder from source and pass it with `--builder`. See [docs/image-conversion.md](https://github.com/evolving-edge/ee-cdn/blob/main/docs/image-conversion.md) in ee-cdn for what converts, what is left alone and why.
+
 **Pin ee-builder in CI.** By default the CLI downloads the latest `ee-builder` and records its checksum in `.ee-builder-lock.json`. With "latest" plus a committed lockfile, every new builder release fails the deploy with a checksum mismatch, by design. Pin a version instead (`--builder-version` or `EE_BUILDER_VERSION`, using the label from the "Upload ee-builder to CDN" run summary), and commit the lockfile.
 
 The deploy token comes from the portal (Workload → Deploy Tokens) and is read
@@ -42,6 +47,39 @@ for `--project` and `--build`.
 
 **Publii**: set deployment to *Manual*, which writes the site to a folder, then
 point `ee-deploy` at that folder.
+
+## GitHub Action
+
+For CI that has no Node of its own (Hugo, Zola, Jekyll, Pelican, mdBook, Sphinx, MkDocs, Quarto and others usually build on Go, Ruby, Python or Rust images), this repository is also a GitHub Action. It runs `ee-deploy` from this package and brings its own Node, so the workflow needs no `actions/setup-node` step and no `npm install`:
+
+```yaml
+- uses: actions/checkout@v5
+- uses: peaceiris/actions-hugo@v3
+  with:
+    hugo-version: 'latest'
+- run: hugo --minify
+- uses: evolving-edge/ee-cdn-cli@vX.Y.Z
+  with:
+    directory: public
+    domain: blog.example.com
+    project: proj_abc
+    token: ${{ secrets.EE_CDN_TOKEN }}
+    builder-version: 'X.Y.Z'
+```
+
+Replace `vX.Y.Z` with a release tag from [the tags list](https://github.com/evolving-edge/ee-cdn-cli/tags). Referring to `@main` instead means every change to this repository changes your deploys the moment it lands. For the same reason, set `builder-version` so a new ee-builder release can't change what a re-run uploads.
+
+Every input is described in `action.yml`; they match the CLI's flags. The ones that differ from the CLI:
+
+- **`working-directory`**: where the project is, when it isn't at the root of the repository. Output-folder detection and relative paths start there.
+- **`dry-run: true`**: packages the site without uploading it, and needs no token. Use it to test a workflow before giving it a deploy token.
+- **`image-hosts`**: the CLI's repeatable `--image-host`, as one input separated by spaces, commas or new lines.
+- **`level`**: 0 or 2. Level 1 is refused, because its key is made for each build and must reach only the browser; a CI run has no safe place to give it to you.
+- **`url`** (output): `https://<domain>`, once the upload is accepted. Empty on a dry run.
+
+**Node.** If the runner's Node is 22.12 or later, the action uses it and changes nothing. Otherwise it installs Node 22.12 with `actions/setup-node`, and that Node stays first on `PATH` for the rest of the job. If a later step needs a different Node, set it up after this action.
+
+The action packages and uploads only. It runs no other build tool: build the site, including any CSS step such as Tailwind, in the steps before it.
 
 ## Astro
 
@@ -83,7 +121,7 @@ deployed site is missing files. To check, compare the hash the integration logs
 against an independent one:
 
 ```bash
-ee-builder -src dist -hash-only    # must equal the logged "Content hash"
+ee-builder -src dist -out /tmp/check.ee | grep 'Content hash'    # must equal the logged "Content hash"
 ```
 
 ## Two required Astro settings
@@ -115,6 +153,9 @@ you find out in production, and warns on `trailingSlash: 'never'`.
 | `deploy.projectId` | string | — | Required if your deploy token is project-scoped. |
 | `deploy.buildId` | string | — | Applies the Build Config's server-side defaults. |
 | `deploy.trailingSlash` | boolean | `true` | Writes `# ee:trailing-slash on` into `dist/_redirects`, so a bare `/about` redirects to `/about/` instead of 404ing. Set `false` to leave `_redirects` alone. |
+| `deploy.images` | `'webp' \| 'avif' \| 'off'` | — | Convert the site's JPEG and PNG images while packaging; see "Image conversion". Unset, `ee.jsonc` decides. |
+| `deploy.imageHosts` | string[] | `[]` | Other hosts the site is served from; `deploy.domain` always counts. |
+| `deploy.imageReport` | string | — | Write the conversion report as JSON here, relative to the project root. |
 | `controlPlane` | string | `https://cp.3dge.app` | |
 | `token` | string | `$EE_CDN_TOKEN` | |
 | `builderPath` | string | — | Use a local `ee-builder` instead of downloading. |
@@ -190,11 +231,9 @@ each key through your own script before the SDK's auto-init runs.
 
 ## ee-builder integrity
 
-The control plane publishes a `.sha256` sidecar for `edge-node` but not for
-`ee-builder`. Until it does, the first download's digest is recorded in
-`.ee-builder-lock.json` and every later download must match it. **Commit that
-lockfile** so CI verifies the same binary you built against. Pass
-`builderChecksum` to pin a digest explicitly instead.
+The first download's digest is recorded in `.ee-builder-lock.json` and every later download must match it. **Commit that lockfile** so CI verifies the same binary you built against. Pass `builderChecksum` to pin a digest explicitly instead. A pin always wins.
+
+The control plane also publishes a `.sha256` beside each ee-builder binary. A fresh download must match it. For `latest`, which moves, it is fetched on every run: a cached copy that no longer matches is stale and is downloaded again, unless the lockfile pins it, in which case the pinned copy is kept and a warning names the newer release and the lockfile entry to delete to move to it. Without the network, or for a release published before the `.sha256` existed, the cache and the lockfile decide as before. The cache is shared by every project on the machine, so each binary is also kept under its digest: one project moving to a newer `latest` never removes the binary another project's lockfile pins.
 
 Published targets are `linux/amd64`, `linux/arm64`, `darwin/arm64`,
 `darwin/amd64` and `windows/amd64`. On anything else, build from source and

@@ -26,12 +26,13 @@ import {
   rmSync,
   writeFileSync,
 } from 'node:fs';
-import { dirname, join } from 'node:path';
+import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 import {
   DEFAULT_CONTROL_PLANE,
   ensureBuilder,
+  imageOptions,
   runBuilder,
   scratchFile,
   toKey,
@@ -122,6 +123,19 @@ export default function eeCdn(options = {}) {
             "trailingSlash: 'never' will 404 on ee-cdn — the edge only " +
               "appends index.html to paths ending in '/'. Use 'always'.",
           );
+        }
+        // The site's image options are checked here, before
+        // astro:build:start packages and uploads any sub-workload (#570).
+        if (deploy) {
+          try {
+            imageOptions({
+              images: deploy.images ?? null,
+              imageHosts: deploy.imageHosts ?? [],
+              imageReport: deploy.imageReport ? resolve(projectRoot, deploy.imageReport) : null,
+            });
+          } catch (e) {
+            throw new Error(`[@evolving-edge/ee-cdn-cli] deploy: ${e.message}`);
+          }
         }
         if (deploy?.domain && !token && upload && !dryRun) {
           logger.warn(
@@ -324,6 +338,11 @@ export default function eeCdn(options = {}) {
           // edge's trailing-slash rule. On unless deploy.trailingSlash is
           // false (#396).
           trailingSlash: deploy.trailingSlash ?? true,
+          // The site deploy only: sub-workloads above are not served on the
+          // site's own URLs, so their images are not converted.
+          images: deploy.images ?? null,
+          imageHosts: deploy.imageHosts ?? [],
+          imageReport: deploy.imageReport ? resolve(projectRoot, deploy.imageReport) : null,
           builderPath: builderPath ? join(projectRoot, builderPath) : null,
           builderVersion,
           builderChecksum,

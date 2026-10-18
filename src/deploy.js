@@ -18,7 +18,10 @@ import { isAbsolute, join, resolve } from 'node:path';
 
 import {
   DEFAULT_CONTROL_PLANE,
+  configImagesLine,
   ensureBuilder,
+  imageOptions,
+  requireImageSupport,
   runBuilder,
   scratchFile,
 } from './builder.js';
@@ -69,6 +72,9 @@ export async function deploySite({
   metadata = {},
   trailingSlash = false,
   cleanUrls = false,
+  images = null,
+  imageHosts = [],
+  imageReport = null,
   logger = console,
 }) {
   const src = isAbsolute(dir) ? dir : resolve(process.cwd(), dir);
@@ -78,6 +84,8 @@ export async function deploySite({
   if (!domain) {
     throw new Error('A domain is required — it is what the edge serves this workload as.');
   }
+  // Checked before anything is downloaded or packaged.
+  const imgs = imageOptions({ images, imageHosts, imageReport });
 
   mkdirSync(cacheDir, { recursive: true });
 
@@ -92,14 +100,37 @@ export async function deploySite({
         logger,
       });
 
+  // Only when images are asked for: a builder from before image conversion
+  // packages a site without them exactly as it always did, and would refuse
+  // the flags with a usage error that says nothing useful. Asked for means
+  // by an option, or, with no option given, by the site's ee.jsonc, which an
+  // older builder ignores and so would package the images unconverted.
+  const hint = builderPath
+    ? 'Rebuild it from the current ee-cdn source (go build -tags nodynamic in ee-builder) and pass that with builderPath (--builder).'
+    : `Use a published ee-builder that has them: if ${lockfilePath ?? 'your lockfile'} pins ee-builder ${builderVersion}, ` +
+      'delete that entry so the current release is fetched, or pin a newer label with builderVersion (--builder-version). ' +
+      'If the current release predates image conversion, build ee-builder from source (go build -tags nodynamic) ' +
+      'and pass it with builderPath (--builder).';
+  const configLine = imgs ? 0 : configImagesLine(src);
+  if (imgs) {
+    requireImageSupport(bin, hint);
+  } else if (configLine) {
+    requireImageSupport(
+      bin,
+      `${hint} To deploy with this builder without converting, set "images": "off" in ee.jsonc (or remove it) and pass no image option: --images is itself a flag this builder does not have.`,
+      `${join(src, 'ee.jsonc')} line ${configLine} turns image conversion on, but `,
+    );
+  }
+
   // Written into the build output before packaging, on a dry run too, so a
   // dry-run bundle matches a real one (#395).
   ensurePragmas(src, { trailingSlash, cleanUrls }, logger);
 
   const out = scratchFile('site.ee');
   logger.info(`Packaging ${src} as a Level ${level} workload…`);
-  const result = runBuilder(bin, { src, out, level });
+  const result = runBuilder(bin, { src, out, level, domain, images: imgs });
   logger.info(`Content hash ${result.hash}`);
+  if (imgs?.report) logger.info(`Image report written to ${imgs.report}`);
 
   // runBuilder reads the secret and salt out of ee-builder's stdout, and
   // returns null for either if the line is missing or the format shifts. At
