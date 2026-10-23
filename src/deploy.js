@@ -108,7 +108,8 @@ export async function deploySite({
   const hint = builderPath
     ? 'Rebuild it from the current ee-cdn source (go build -tags nodynamic in ee-builder) and pass that with builderPath (--builder).'
     : `Use a published ee-builder that has them: if ${lockfilePath ?? 'your lockfile'} pins ee-builder ${builderVersion}, ` +
-      'delete that entry so the current release is fetched, or pin a newer label with builderVersion (--builder-version).';
+      'delete that entry so the current release is fetched, or pin a newer label with builderVersion (--builder-version). ' +
+      'Releases published since 2026-10-23 (c64bedcb850a) have them.';
   const configLine = imgs ? 0 : configImagesLine(src);
   if (imgs) {
     requireImageSupport(bin, hint);
