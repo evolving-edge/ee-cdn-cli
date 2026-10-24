@@ -23,7 +23,11 @@ import {
   cacheFs,
   cachedBuilderName,
   ensureBuilder,
+  IMAGE_FLAGS,
   imageOptions,
+  MAX_IMAGE_WIDTH,
+  MAX_WIDTH_FLAG,
+  neededImageFlags,
   requireImageSupport,
 } from '../src/builder.js';
 import { deploySite } from '../src/deploy.js';
@@ -45,7 +49,7 @@ const CLI = fileURLToPath(new URL('../bin/ee-deploy.js', import.meta.url));
  * argsFile, answers -h with Go's usage listing (with or without the image
  * flags), and prints the summary runBuilder parses.
  */
-function fakeBuilder(dir, { imageFlags = true } = {}) {
+function fakeBuilder(dir, { imageFlags = true, maxWidthFlag = true } = {}) {
   const bin = join(dir, 'fake-ee-builder');
   const argsFile = join(dir, 'args.txt');
   const usage = [
@@ -53,6 +57,7 @@ function fakeBuilder(dir, { imageFlags = true } = {}) {
     '  -domain string',
     '    \tDomain for workload',
     ...(imageFlags ? ['  -image-hosts string', '  -image-report string', '  -images string'] : []),
+    ...(imageFlags && maxWidthFlag ? ['  -image-max-width int'] : []),
     '  -version',
     '    \tPrint the version, the image pipeline version and its encoders, then exit',
   ].join('\\n');
@@ -121,7 +126,7 @@ describe('ee-builder arguments for image conversion (#570)', () => {
 
 describe('a builder too old for image options (#570)', () => {
   it('reads the image flags from -h, not the version', () => {
-    assert.deepEqual(builderImageFlags(fakeBuilder(fresh('v')).bin), ['-images', '-image-hosts', '-image-report']);
+    assert.deepEqual(builderImageFlags(fakeBuilder(fresh('v')).bin), ['-images', '-image-hosts', '-image-report', '-image-max-width']);
     // Shaped like the builder published from 19a3771: -version already says
     // images:1, but the flags are not there.
     const published = fakeBuilder(fresh('v'), { imageFlags: false }).bin;
@@ -486,5 +491,128 @@ describe('a cached latest ee-builder against its published checksum (#570)', () 
       throw new Error('offline');
     };
     assert.equal(readFileSync(await ensureBuilder(opts(d)), 'utf8'), 'builder old');
+  });
+});
+
+describe('-image-max-width through cdn-cli (#571)', () => {
+  it('passes the width to ee-builder, alone or with conversion', () => {
+    assert.deepEqual(
+      builderArgs({ src: '/s', out: '/o', level: 0, images: imageOptions({ imageMaxWidth: 2560 }) }).slice(6),
+      ['-image-max-width', '2560'],
+    );
+    assert.deepEqual(
+      builderArgs({ src: '/s', out: '/o', level: 0, domain: 'example.com', images: imageOptions({ images: 'webp', imageMaxWidth: '1200' }) }).slice(6),
+      ['-domain', 'example.com', '-images', 'webp', '-image-max-width', '1200'],
+    );
+  });
+
+  it('checks the width before anything runs', () => {
+    assert.equal(imageOptions({ imageMaxWidth: null }), null);
+    assert.equal(imageOptions({ imageMaxWidth: '' }), null, 'an empty Action input means unset');
+    assert.equal(imageOptions({ imageMaxWidth: ' 2560 ' }).maxWidth, 2560);
+    assert.equal(imageOptions({ imageMaxWidth: 16383 }).maxWidth, 16383);
+    for (const bad of [0, -1, 16384, 2.5, '2.5', '1e3', 'abc', '0x10', '+5', true]) {
+      assert.throws(() => imageOptions({ imageMaxWidth: bad }), /whole number of pixels from 1 to 16383/, `accepted ${JSON.stringify(bad)}`);
+    }
+  });
+
+  it('asks the builder only for the flags the options use', () => {
+    assert.deepEqual(neededImageFlags(imageOptions({ imageMaxWidth: 800 })), ['-image-max-width']);
+    assert.deepEqual(neededImageFlags(imageOptions({ images: 'webp' })), ['-images', '-image-hosts', '-image-report']);
+    assert.deepEqual(neededImageFlags(imageOptions({ images: 'avif', imageMaxWidth: 800 })), ['-images', '-image-hosts', '-image-report', '-image-max-width']);
+    assert.deepEqual(neededImageFlags(null), []);
+  });
+
+  it('refuses a builder that converts images but cannot resize them, before packaging', async () => {
+    const d = fresh('no-resize');
+    const fb = fakeBuilder(d, { maxWidthFlag: false });
+    assert.deepEqual(builderImageFlags(fb.bin), ['-images', '-image-hosts', '-image-report']);
+    await assert.rejects(
+      deploySite({ dir: site(d), domain: 'example.com', dryRun: true, builderPath: fb.bin, cacheDir: join(d, 'c'), imageMaxWidth: 2560, logger: quiet }),
+      /too old to resize images: it has no -image-max-width .*newer than the conversion flags/s,
+    );
+    assert.equal(fb.args(), null, 'the builder must not have been run to package');
+    // The same builder still converts.
+    const r = await deploySite({ dir: site(d), domain: 'example.com', dryRun: true, builderPath: fb.bin, cacheDir: join(d, 'c'), images: 'webp', logger: quiet });
+    rmSync(r.workloadPath, { force: true });
+    assert.equal(after_(fb.args(), '-images'), 'webp');
+  });
+
+  it('a builder with no image flags at all is "too old to convert images" when both are asked for', async () => {
+    const d = fresh('no-images');
+    const fb = fakeBuilder(d, { imageFlags: false });
+    await assert.rejects(
+      deploySite({ dir: site(d), domain: 'example.com', dryRun: true, builderPath: fb.bin, cacheDir: join(d, 'c'), images: 'webp', imageMaxWidth: 2560, logger: quiet }),
+      /too old to convert images: it has no -images, -image-hosts, -image-report, -image-max-width/,
+    );
+  });
+
+  it('ee-deploy: --image-max-width reaches ee-builder, and a bad value is a usage error', () => {
+    const d = fresh('cli-width');
+    const fb = fakeBuilder(d);
+    const r = spawnSync(process.execPath, [
+      CLI, site(d), '--domain', 'example.com', '--dry-run', '--builder', fb.bin, '--cache-dir', join(d, 'c'), '--image-max-width', '2560',
+    ], { cwd: d, encoding: 'utf8', env: { ...process.env, TMPDIR: d } });
+    assert.equal(r.status, 0, r.stderr);
+    assert.equal(after_(fb.args(), '-image-max-width'), '2560');
+    assert.ok(!fb.args().includes('-images'), 'resizing alone passes no conversion flag');
+
+    for (const bad of ['0', 'wide', '99999']) {
+      const b = spawnSync(process.execPath, [CLI, site(d), '--domain', 'example.com', '--dry-run', '--image-max-width', bad], { cwd: d, encoding: 'utf8' });
+      assert.equal(b.status, 2, `--image-max-width ${bad}`);
+      assert.match(b.stderr, /--image-max-width must be a whole number of pixels from 1 to 16383/);
+    }
+  });
+
+  it('Astro: deploy.imageMaxWidth reaches ee-builder, and a bad one stops at astro:config:setup', async () => {
+    const root = fresh('astro-width');
+    const fb = fakeBuilder(root);
+    const dist = site(root);
+    const eeCdn = (await import('../src/astro.js')).default;
+    const bad = eeCdn({ deploy: { domain: 'example.com', imageMaxWidth: -3 }, builderPath: 'fake-ee-builder', dryRun: true });
+    assert.throws(
+      () => bad.hooks['astro:config:setup']({ config: { root: pathToFileURL(`${root}/`), build: {} }, logger: quiet }),
+      /ee-cdn-cli\] deploy: image max width must be/,
+    );
+    const integration = eeCdn({ deploy: { domain: 'example.com', imageMaxWidth: 1600 }, builderPath: 'fake-ee-builder', dryRun: true });
+    integration.hooks['astro:config:setup']({ config: { root: pathToFileURL(`${root}/`), build: {} }, logger: quiet });
+    const tmp = process.env.TMPDIR;
+    process.env.TMPDIR = root;
+    try {
+      await integration.hooks['astro:build:done']({ dir: pathToFileURL(`${dist}/`), logger: quiet });
+    } finally {
+      if (tmp === undefined) delete process.env.TMPDIR;
+      else process.env.TMPDIR = tmp;
+    }
+    assert.equal(after_(fb.args(), '-image-max-width'), '1600');
+  });
+});
+
+// The fake builder's -h listing and the width limit are copies of
+// ee-builder's. In the monorepo, hold them to its source, so they cannot
+// drift; the standalone ee-cdn-cli repository has no ee-builder to read.
+const eeBuilderDir = fileURLToPath(new URL('../../ee-builder/', import.meta.url));
+describe('cdn-cli agrees with ee-builder about the image flags (#571)', { skip: !existsSync(join(eeBuilderDir, 'main.go')) && 'no ee-builder source here' }, () => {
+  const mainGo = existsSync(join(eeBuilderDir, 'main.go')) ? readFileSync(join(eeBuilderDir, 'main.go'), 'utf8') : '';
+  const defined = new Set([...mainGo.matchAll(/flag\.\w+\([^"]*"([a-z-]+)"/g)].map((m) => `-${m[1]}`));
+
+  it('every image flag cdn-cli passes or probes for is one ee-builder defines', () => {
+    assert.ok(defined.size > 10, `found only ${defined.size} flags in main.go; the pattern is broken`);
+    for (const f of [...IMAGE_FLAGS, MAX_WIDTH_FLAG]) assert.ok(defined.has(f), `ee-builder defines no ${f}`);
+  });
+
+  it('the fake builder lists only flags ee-builder defines', () => {
+    const d = fresh('fake-flags');
+    const usage = spawnSync(fakeBuilder(d).bin, ['-h'], { encoding: 'utf8' }).stderr;
+    const listed = [...usage.matchAll(/^\s+(-[a-z-]+)/gm)].map((m) => m[1]);
+    assert.ok(listed.includes(MAX_WIDTH_FLAG));
+    for (const f of listed) assert.ok(defined.has(f), `the fake lists ${f}, which ee-builder does not define`);
+  });
+
+  it("the width limit is ee-builder's maxResizeWidth", () => {
+    const src = readFileSync(join(eeBuilderDir, 'image_resize.go'), 'utf8');
+    const m = /const maxResizeWidth = (\d+)/.exec(src);
+    assert.ok(m, 'no maxResizeWidth in image_resize.go');
+    assert.equal(MAX_IMAGE_WIDTH, Number(m[1]));
   });
 });

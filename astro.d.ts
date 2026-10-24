@@ -44,6 +44,14 @@ export interface EEDeployOptions {
   imageHosts?: string[];
   /** Write the conversion report as JSON here, relative to the project root. */
   imageReport?: string;
+  /**
+   * Scale JPEG and PNG images wider than this many pixels down to it before
+   * packaging (and before any conversion), keeping their names and formats.
+   * This changes the deployed image files. Unset, nothing is resized. Needs
+   * an ee-builder with the `-image-max-width` flag. See "Resizing" in
+   * docs/image-conversion.md in ee-cdn.
+   */
+  imageMaxWidth?: number;
 }
 
 export interface EEOptions {

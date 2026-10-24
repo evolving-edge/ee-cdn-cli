@@ -14,7 +14,7 @@ import { parseArgs } from 'node:util';
 import { createRequire } from 'node:module';
 
 import { deploySite } from '../src/deploy.js';
-import { DEFAULT_CONTROL_PLANE, IMAGE_FORMATS } from '../src/builder.js';
+import { DEFAULT_CONTROL_PLANE, IMAGE_FORMATS, parseImageMaxWidth } from '../src/builder.js';
 import { detectOutputDir } from '../src/detect.js';
 
 const { version } = createRequire(import.meta.url)('../package.json');
@@ -57,6 +57,10 @@ OPTIONS
                          URLs on it count as the site's own. Repeatable;
                          --domain always counts
   --image-report <path>  Write the conversion report as JSON to <path>
+  --image-max-width <px> Scale JPEG and PNG images wider than <px> down to
+                         that width before packaging, keeping their names and
+                         formats. Changes the deployed image files; off unless
+                         given. Needs an ee-builder with -image-max-width
   --builder <path>       Use a local ee-builder instead of downloading one
   --builder-version <v>  Pin the ee-builder version instead of "latest".
                          Defaults to $EE_BUILDER_VERSION
@@ -78,6 +82,7 @@ EXAMPLES
   ee-deploy ./public --domain blog.example.com --project proj_abc
   ee-deploy ./_site  --domain example.com --dry-run
   ee-deploy ./output --domain blog.example.com --images webp --image-host www.example.com
+  ee-deploy ./output --domain blog.example.com --image-max-width 2560
 `;
 
 function fail(message, { usage = false } = {}) {
@@ -106,6 +111,7 @@ try {
       images: { type: 'string' },
       'image-host': { type: 'string', multiple: true },
       'image-report': { type: 'string' },
+      'image-max-width': { type: 'string' },
       lockfile: { type: 'string' },
       'cache-dir': { type: 'string' },
       'dry-run': { type: 'boolean', default: false },
@@ -150,6 +156,14 @@ if (opts.images !== undefined && !IMAGE_FORMATS.has(opts.images)) {
   fail(`--images must be webp, avif or off (got "${opts.images}")`, { usage: true });
 }
 
+if (opts['image-max-width'] !== undefined) {
+  try {
+    parseImageMaxWidth(opts['image-max-width']);
+  } catch (err) {
+    fail(`--${err.message.replace(/^image max width/, 'image-max-width')}`, { usage: true });
+  }
+}
+
 const level = opts.level === undefined ? 0 : Number(opts.level);
 if (!Number.isInteger(level) || level < 0 || level > 2) {
   fail(`--level must be 0, 1 or 2 (got "${opts.level}")`);
@@ -184,6 +198,7 @@ try {
     images: opts.images ?? null,
     imageHosts: opts['image-host'] ?? [],
     imageReport: opts['image-report'] ?? null,
+    imageMaxWidth: opts['image-max-width'] ?? null,
     builderVersion: opts['builder-version'] ?? process.env.EE_BUILDER_VERSION ?? 'latest',
     domain,
     name: opts.name,
