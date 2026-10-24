@@ -132,6 +132,7 @@ export default function eeCdn(options = {}) {
               images: deploy.images ?? null,
               imageHosts: deploy.imageHosts ?? [],
               imageReport: deploy.imageReport ? resolve(projectRoot, deploy.imageReport) : null,
+              imageMaxWidth: deploy.imageMaxWidth ?? null,
             });
           } catch (e) {
             throw new Error(`[@evolving-edge/ee-cdn-cli] deploy: ${e.message}`);
@@ -343,6 +344,7 @@ export default function eeCdn(options = {}) {
           images: deploy.images ?? null,
           imageHosts: deploy.imageHosts ?? [],
           imageReport: deploy.imageReport ? resolve(projectRoot, deploy.imageReport) : null,
+          imageMaxWidth: deploy.imageMaxWidth ?? null,
           builderPath: builderPath ? join(projectRoot, builderPath) : null,
           builderVersion,
           builderChecksum,

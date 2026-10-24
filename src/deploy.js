@@ -21,6 +21,8 @@ import {
   configImagesLine,
   ensureBuilder,
   imageOptions,
+  MAX_WIDTH_FLAG,
+  neededImageFlags,
   requireImageSupport,
   runBuilder,
   scratchFile,
@@ -75,6 +77,7 @@ export async function deploySite({
   images = null,
   imageHosts = [],
   imageReport = null,
+  imageMaxWidth = null,
   logger = console,
 }) {
   const src = isAbsolute(dir) ? dir : resolve(process.cwd(), dir);
@@ -85,7 +88,7 @@ export async function deploySite({
     throw new Error('A domain is required — it is what the edge serves this workload as.');
   }
   // Checked before anything is downloaded or packaged.
-  const imgs = imageOptions({ images, imageHosts, imageReport });
+  const imgs = imageOptions({ images, imageHosts, imageReport, imageMaxWidth });
 
   mkdirSync(cacheDir, { recursive: true });
 
@@ -113,7 +116,13 @@ export async function deploySite({
       '(go build -tags nodynamic) and pass it with builderPath (--builder).';
   const configLine = imgs ? 0 : configImagesLine(src);
   if (imgs) {
-    requireImageSupport(bin, hint);
+    const needed = neededImageFlags(imgs);
+    // -image-max-width came after the conversion flags (#571), so the
+    // releases the hint names for them may not have it.
+    const widthHint = needed.includes(MAX_WIDTH_FLAG)
+      ? ' -image-max-width (#571) is newer than the conversion flags, so a builder that converts images may still lack it.'
+      : '';
+    requireImageSupport(bin, hint + widthHint, '', needed);
   } else if (configLine) {
     requireImageSupport(
       bin,

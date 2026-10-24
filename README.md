@@ -28,6 +28,7 @@ ee-deploy [directory] --domain <host> [options]
   --images <webp|avif|off> Convert JPEG and PNG images while packaging.
   --image-host <host>      Another host the site is served from (repeatable).
   --image-report <path>    Write the conversion report as JSON.
+  --image-max-width <px>   Scale images wider than <px> down to that width.
   --builder-version <v>    Pin ee-builder instead of using "latest".
   --dry-run                Package but do not upload.
   --help                   Everything else.
@@ -38,6 +39,8 @@ ee-deploy [directory] --domain <host> [options]
 **Routing flags.** Most generators link to `/about` while writing `about/index.html`; `--trailing-slash` makes the edge redirect `/about` to `/about/`. Generators that write `about.html` instead (Quartz, Observable Framework, vite-ssg, VitePress with `cleanUrls`) want `--clean-urls`. Each flag writes its line into the output's `_redirects` (creating the file if needed), so the setting travels with the bundle. A site whose own `_redirects` already sets the pragma keeps its value, `off` included.
 
 **Image conversion.** `--images webp` (or `avif`) has ee-builder convert the site's JPEG and PNG images while packaging and rewrite every page, stylesheet, feed, `_redirects` and `_headers` reference to the new names; an image it cannot rewrite every reference to stays as it is, with the reason in the report. Lossy formats store a re-encoded copy of each photo (PNGs are lossless by default). `--domain` always counts as the site's own host, so absolute URLs on it are rewritten; add any other host the site is served from with `--image-host`, once per host. ee-builder prints a readable report on stderr, and `--image-report` also writes the whole report as JSON. `--images off` overrides an `"images"` setting in the site's `ee.jsonc`, which otherwise applies on its own. Image options need an ee-builder with the `-images` flag (`ee-builder -h` lists it); the CLI checks before packaging and stops with a message if the builder is older. It checks too when no option is given but the site's `ee.jsonc` turns conversion on (`"images"` set to `webp`, `avif` or an object), since an older builder would ignore that setting and package the images unconverted. To deploy with such a builder without converting, set `"images": "off"` in `ee.jsonc` (or remove it) and pass no image option, since `--images off` is itself a flag an older builder lacks. The ee-builder published on 2026-10-23 (`c64bedcb850a`) and later have image conversion; with an older one, build ee-builder from source and pass it with `--builder`. See [docs/image-conversion.md](https://github.com/evolving-edge/ee-cdn/blob/main/docs/image-conversion.md) in ee-cdn for what converts, what is left alone and why.
+
+**Resizing images.** `--image-max-width 2560` has ee-builder scale every JPEG and PNG wider than 2,560 pixels down to 2,560 wide while packaging, keeping the aspect ratio, before any conversion. **It changes the image files that are deployed**: each keeps its name and format but is re-encoded smaller (JPEG at quality 85, PNG losslessly). Your build output and repository are never written to. Nothing is enlarged, a result that isn't smaller is discarded, and images it can't handle safely (animated PNGs, CMYK, colour profiles other than sRGB) are left as they are; GIF and SVG are never touched. It is off unless given. With `--images`, the resized files are what gets converted. The log lists each resized image with its size before and after. Pages are not changed, so a `srcset` width (`photo.jpg 4000w`) or an `og:image:width` still states the original width; pick a limit at or above the widest one your generator writes. It needs an ee-builder with the `-image-max-width` flag, which came after image conversion; the CLI checks before packaging. It doesn't lift the 100 MiB deploy limit on its own: a site's many smaller images still count.
 
 **Pin ee-builder in CI.** By default the CLI downloads the latest `ee-builder` and records its checksum in `.ee-builder-lock.json`. With "latest" plus a committed lockfile, every new builder release fails the deploy with a checksum mismatch, by design. Pin a version instead (`--builder-version` or `EE_BUILDER_VERSION`, using the label from the "Upload ee-builder to CDN" run summary), and commit the lockfile.
 
@@ -74,6 +77,7 @@ Every input is described in `action.yml`; they match the CLI's flags. The ones t
 - **`working-directory`**: where the project is, when it isn't at the root of the repository. Output-folder detection and relative paths start there.
 - **`dry-run: true`**: packages the site without uploading it, and needs no token. Use it to test a workflow before giving it a deploy token.
 - **`image-hosts`**: the CLI's repeatable `--image-host`, as one input separated by spaces, commas or new lines.
+- **`image-max-width`**: the CLI's `--image-max-width`. It changes the image files that are deployed (see "Resizing images"); leave it empty to change nothing.
 - **`level`**: 0 or 2. Level 1 is refused, because its key is made for each build and must reach only the browser; a CI run has no safe place to give it to you.
 - **`url`** (output): `https://<domain>`, once the upload is accepted. Empty on a dry run.
 
@@ -156,6 +160,7 @@ you find out in production, and warns on `trailingSlash: 'never'`.
 | `deploy.images` | `'webp' \| 'avif' \| 'off'` | — | Convert the site's JPEG and PNG images while packaging; see "Image conversion". Unset, `ee.jsonc` decides. |
 | `deploy.imageHosts` | string[] | `[]` | Other hosts the site is served from; `deploy.domain` always counts. |
 | `deploy.imageReport` | string | — | Write the conversion report as JSON here, relative to the project root. |
+| `deploy.imageMaxWidth` | number | — | Scale JPEG and PNG images wider than this down to it before packaging; see "Resizing images". Changes the deployed image files. |
 | `controlPlane` | string | `https://cp.3dge.app` | |
 | `token` | string | `$EE_CDN_TOKEN` | |
 | `builderPath` | string | — | Use a local `ee-builder` instead of downloading. |

@@ -265,15 +265,37 @@ export const IMAGE_FORMATS = new Set(['webp', 'avif', 'off']);
 /** The image flags builderArgs passes. ee-builder gained all three at once. */
 export const IMAGE_FLAGS = ['-images', '-image-hosts', '-image-report'];
 
+/** The resize flag, which came later than the conversion flags (#571). */
+export const MAX_WIDTH_FLAG = '-image-max-width';
+
+/** The widest -image-max-width ee-builder takes (maxResizeWidth). */
+export const MAX_IMAGE_WIDTH = 16383;
+
+/**
+ * An image width in pixels, from a number or a string of digits, or an error
+ * naming what was wrong. ee-builder checks it too; checking here stops a bad
+ * value before an Astro build packages anything.
+ */
+export function parseImageMaxWidth(v) {
+  const s = String(v).trim();
+  const n = /^[0-9]+$/.test(s) ? Number(s) : NaN;
+  if (!Number.isInteger(n) || n < 1 || n > MAX_IMAGE_WIDTH) {
+    throw new Error(`image max width must be a whole number of pixels from 1 to ${MAX_IMAGE_WIDTH} (got "${v}")`);
+  }
+  return n;
+}
+
 /**
  * Check and normalise the image options, or return null when none was given,
  * in which case nothing image-related is passed and ee.jsonc alone decides.
  * The report path is made absolute so it does not depend on where ee-builder
  * runs.
  */
-export function imageOptions({ images = null, imageHosts = [], imageReport = null } = {}) {
+export function imageOptions({ images = null, imageHosts = [], imageReport = null, imageMaxWidth = null } = {}) {
   const hosts = (imageHosts ?? []).map((h) => String(h).trim()).filter(Boolean);
-  if (images == null && hosts.length === 0 && !imageReport) return null;
+  const unsetWidth = imageMaxWidth == null || String(imageMaxWidth).trim() === '';
+  if (images == null && hosts.length === 0 && !imageReport && unsetWidth) return null;
+  const maxWidth = unsetWidth ? null : parseImageMaxWidth(imageMaxWidth);
   if (images != null && !IMAGE_FORMATS.has(images)) {
     throw new Error(`images must be webp, avif or off (got "${images}")`);
   }
@@ -289,7 +311,20 @@ export function imageOptions({ images = null, imageHosts = [], imageReport = nul
     format: images ?? null,
     hosts,
     report: imageReport ? (isAbsolute(imageReport) ? imageReport : resolve(process.cwd(), imageReport)) : null,
+    maxWidth,
   };
+}
+
+/**
+ * The ee-builder flags image options need: the conversion flags for a format,
+ * hosts or a report, and -image-max-width for a width.
+ */
+export function neededImageFlags(images) {
+  if (!images) return [];
+  const needed = [];
+  if (images.format != null || images.hosts.length || images.report) needed.push(...IMAGE_FLAGS);
+  if (images.maxWidth) needed.push(MAX_WIDTH_FLAG);
+  return needed;
 }
 
 /**
@@ -304,6 +339,7 @@ export function builderArgs({ src, out, level, domain = null, images = null }) {
     if (images.format) args.push('-images', images.format);
     if (images.hosts.length) args.push('-image-hosts', images.hosts.join(','));
     if (images.report) args.push('-image-report', images.report);
+    if (images.maxWidth) args.push(MAX_WIDTH_FLAG, String(images.maxWidth));
   }
   return args;
 }
@@ -331,7 +367,7 @@ export function builderImageFlags(builderPath) {
     const how = r.signal ? `was killed by ${r.signal}` : `exited ${r.status}`;
     throw new Error(`ee-builder at ${builderPath} ${how} when asked for its flags (-h):\n${usage.trim().slice(-2000)}`);
   }
-  return IMAGE_FLAGS.filter((f) => new RegExp(`^\\s+${f}\\b`, 'm').test(usage));
+  return [...IMAGE_FLAGS, MAX_WIDTH_FLAG].filter((f) => new RegExp(`^\\s+${f}\\b`, 'm').test(usage));
 }
 
 /**
@@ -411,12 +447,13 @@ export function readEEJsonc(path) {
 }
 
 /** Refuse a builder too old for the image options it is about to be given. */
-export function requireImageSupport(builderPath, hint, why = '') {
+export function requireImageSupport(builderPath, hint, why = '', needed = IMAGE_FLAGS) {
   const have = builderImageFlags(builderPath);
-  const missing = IMAGE_FLAGS.filter((f) => !have.includes(f));
+  const missing = needed.filter((f) => !have.includes(f));
   if (missing.length) {
+    const what = missing.every((f) => f === MAX_WIDTH_FLAG) ? 'resize images' : 'convert images';
     throw new Error(
-      `${why}ee-builder at ${builderPath} is too old to convert images: it has no ` +
+      `${why}ee-builder at ${builderPath} is too old to ${what}: it has no ` +
         `${missing.join(', ')} (\`ee-builder -h\` lists the flags it has). ${hint}`,
     );
   }

@@ -87,6 +87,7 @@ describe('action.yml', () => {
       DEPLOY_IMAGES: 'webp',
       DEPLOY_IMAGE_HOSTS: 'www.example.com, cdn.example.com\n old.example.com',
       DEPLOY_IMAGE_REPORT: 'report.json',
+      DEPLOY_IMAGE_MAX_WIDTH: '2560',
       DEPLOY_BUILDER_VERSION: '0.3.1',
       DEPLOY_DIRECTORY: 'public',
     });
@@ -98,6 +99,7 @@ describe('action.yml', () => {
       '--images=webp',
       '--image-host=www.example.com', '--image-host=cdn.example.com', '--image-host=old.example.com',
       '--image-report=report.json',
+      '--image-max-width=2560',
       '--builder-version=0.3.1',
       '--', 'public',
     ]);
@@ -141,6 +143,7 @@ describe('action.yml', () => {
       DEPLOY_DIRECTORY: '--control-plane=https://evil.example',
       DEPLOY_NAME: '--dry-run',
       DEPLOY_IMAGE_HOSTS: '--level=1',
+      DEPLOY_IMAGE_MAX_WIDTH: '--dry-run',
     });
     assert.equal(r.status, 0, r.stdout);
     // ee-deploy parses with node:util parseArgs: "--x=value" is always a value,
@@ -153,6 +156,7 @@ describe('action.yml', () => {
     assert.deepEqual(positionals, ['--control-plane=https://evil.example']);
     assert.equal(values.name, '--dry-run');
     assert.equal(values['image-host'], '--level=1');
+    assert.equal(values['image-max-width'], '--dry-run');
     assert.equal(values.level, '0');
     assert.equal(values['control-plane'], undefined);
     assert.equal(values['dry-run'], undefined);
