@@ -313,7 +313,7 @@ export function builderArgs({ src, out, level, domain = null, images = null }) {
  * for -h. The flags are asked about directly, not the version: the builder
  * published from 19a3771 already reports image pipeline 1 on -version (the
  * encoders came first, in #638) but has none of these flags, which came with
- * #644.
+ * #644. The first published builder with them is c64bedcb850a (2026-10-23).
  */
 export function builderImageFlags(builderPath) {
   const r = spawnSync(builderPath, ['-h'], {
