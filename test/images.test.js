@@ -23,7 +23,10 @@ import {
   cacheFs,
   cachedBuilderName,
   ensureBuilder,
+  IMAGE_FLAGS,
   imageOptions,
+  MAX_IMAGE_WIDTH,
+  MAX_WIDTH_FLAG,
   neededImageFlags,
   requireImageSupport,
 } from '../src/builder.js';
@@ -582,5 +585,34 @@ describe('-image-max-width through cdn-cli (#571)', () => {
       else process.env.TMPDIR = tmp;
     }
     assert.equal(after_(fb.args(), '-image-max-width'), '1600');
+  });
+});
+
+// The fake builder's -h listing and the width limit are copies of
+// ee-builder's. In the monorepo, hold them to its source, so they cannot
+// drift; the standalone ee-cdn-cli repository has no ee-builder to read.
+const eeBuilderDir = fileURLToPath(new URL('../../ee-builder/', import.meta.url));
+describe('cdn-cli agrees with ee-builder about the image flags (#571)', { skip: !existsSync(join(eeBuilderDir, 'main.go')) && 'no ee-builder source here' }, () => {
+  const mainGo = existsSync(join(eeBuilderDir, 'main.go')) ? readFileSync(join(eeBuilderDir, 'main.go'), 'utf8') : '';
+  const defined = new Set([...mainGo.matchAll(/flag\.\w+\([^"]*"([a-z-]+)"/g)].map((m) => `-${m[1]}`));
+
+  it('every image flag cdn-cli passes or probes for is one ee-builder defines', () => {
+    assert.ok(defined.size > 10, `found only ${defined.size} flags in main.go; the pattern is broken`);
+    for (const f of [...IMAGE_FLAGS, MAX_WIDTH_FLAG]) assert.ok(defined.has(f), `ee-builder defines no ${f}`);
+  });
+
+  it('the fake builder lists only flags ee-builder defines', () => {
+    const d = fresh('fake-flags');
+    const usage = spawnSync(fakeBuilder(d).bin, ['-h'], { encoding: 'utf8' }).stderr;
+    const listed = [...usage.matchAll(/^\s+(-[a-z-]+)/gm)].map((m) => m[1]);
+    assert.ok(listed.includes(MAX_WIDTH_FLAG));
+    for (const f of listed) assert.ok(defined.has(f), `the fake lists ${f}, which ee-builder does not define`);
+  });
+
+  it("the width limit is ee-builder's maxResizeWidth", () => {
+    const src = readFileSync(join(eeBuilderDir, 'image_resize.go'), 'utf8');
+    const m = /const maxResizeWidth = (\d+)/.exec(src);
+    assert.ok(m, 'no maxResizeWidth in image_resize.go');
+    assert.equal(MAX_IMAGE_WIDTH, Number(m[1]));
   });
 });
