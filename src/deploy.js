@@ -27,7 +27,7 @@ import {
   runBuilder,
   scratchFile,
 } from './builder.js';
-import { storeWorkload } from './upload.js';
+import { publishWorkload } from './upload.js';
 
 /**
  * Where a downloaded ee-builder is kept when the caller has nowhere better.
@@ -78,6 +78,7 @@ export async function deploySite({
   imageHosts = [],
   imageReport = null,
   imageMaxWidth = null,
+  key = null,
   logger = console,
 }) {
   const src = isAbsolute(dir) ? dir : resolve(process.cwd(), dir);
@@ -178,10 +179,15 @@ export async function deploySite({
     if (metadata[key]) params[key] = metadata[key];
   }
 
+  // Content already stored at this level for this project is deployed as it
+  // is stored, not uploaded again (#560): a rebuilt Level 1 or 2 package has
+  // new random bytes, which the control plane refuses under the same hash.
+  let published;
   try {
-    await storeWorkload({
+    published = await publishWorkload({
       filePath: out,
       hash: result.hash,
+      level,
       controlPlane,
       token,
       params,
@@ -189,6 +195,9 @@ export async function deploySite({
       // secret material at all, so a `level: 2` site deploy uploaded ciphertext
       // the edge could never decrypt (#262).
       secret: level === 2 ? result.secret : null,
+      // Level 1: the key from the content's first deploy, which must open
+      // what is stored for the deploy to skip the upload.
+      keys: [key],
       logger,
     });
   } finally {
@@ -207,6 +216,12 @@ export async function deploySite({
   );
   logger.info(`  curl -sS -o /dev/null -w '%{http_code}\\n' https://${domain}/`);
 
+  if (!published.uploaded) {
+    // The new package's secret and salt open nothing that is stored, so they
+    // are not handed back; a Level 1 deploy returns the stored content's key.
+    const { secret: _s, salt: _t, ...rest } = result;
+    return { ...rest, uploaded: false, alreadyStored: true, key: published.key ?? undefined };
+  }
   return { ...result, uploaded: true };
 }
 

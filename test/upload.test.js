@@ -36,10 +36,19 @@ afterEach(() => {
   globalThis.fetch = realFetch;
 });
 
-/** Records the request and replies with whatever the test asks for. */
+/**
+ * Records the request and replies with whatever the test asks for. The deploy
+ * paths first ask whether the content is already stored (#560); that question
+ * is answered as a control plane without the route answers it (404, so the
+ * client uploads) and is not recorded, so calls holds the upload alone.
+ * test/stored.test.js covers the question itself.
+ */
 function stubFetch({ status = 200, statusText = 'OK', body = '{}' } = {}) {
   const calls = [];
   globalThis.fetch = async (url, opts) => {
+    if (String(url).includes('/status')) {
+      return { ok: false, status: 404, statusText: 'Not Found', text: async () => 'Workload not found' };
+    }
     calls.push({ url, opts });
     return {
       ok: status >= 200 && status < 300,

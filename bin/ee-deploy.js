@@ -42,6 +42,11 @@ OPTIONS
                          project-scoped, which it should be.
   --name <name>          Workload name. Defaults to the domain.
   --level <0|1|2>        Encryption level. Default 0 (public static site).
+  --key <key>            Level 1 only: the key from this content's first deploy
+                         (the value after #key=). When the content is already
+                         stored, the deploy uses what is stored instead of
+                         uploading, and needs this key to open it.
+                         Defaults to $EE_CDN_LEVEL1_KEY
   --token <token>        Deploy token. Defaults to $EE_CDN_TOKEN.
   --control-plane <url>  Default ${DEFAULT_CONTROL_PLANE}
   --build <id>           Build config ID, for server-side defaults
@@ -77,6 +82,7 @@ ENVIRONMENT
   EE_CDN_PROJECT_ID      Default for --project
   EE_CDN_BUILD_ID        Default for --build
   EE_BUILDER_VERSION     Default for --builder-version
+  EE_CDN_LEVEL1_KEY      Default for --key
 
 EXAMPLES
   ee-deploy ./public --domain blog.example.com --project proj_abc
@@ -100,6 +106,7 @@ try {
       project: { type: 'string' },
       name: { type: 'string' },
       level: { type: 'string' },
+      key: { type: 'string' },
       token: { type: 'string' },
       'control-plane': { type: 'string' },
       build: { type: 'string' },
@@ -168,6 +175,9 @@ const level = opts.level === undefined ? 0 : Number(opts.level);
 if (!Number.isInteger(level) || level < 0 || level > 2) {
   fail(`--level must be 0, 1 or 2 (got "${opts.level}")`);
 }
+if (opts.key !== undefined && level !== 1) {
+  fail('--key is a Level 1 key, and this deploy is not --level 1', { usage: true });
+}
 
 // A project-scoped token uploading without a project ID is refused by the
 // control plane with a 403 that is easy to misread. Say so before the round
@@ -203,6 +213,7 @@ try {
     domain,
     name: opts.name,
     level,
+    key: level === 1 ? (opts.key ?? process.env.EE_CDN_LEVEL1_KEY ?? null) : null,
     controlPlane: opts['control-plane'] ?? DEFAULT_CONTROL_PLANE,
     token: opts.token ?? process.env.EE_CDN_TOKEN,
     dryRun: opts['dry-run'],

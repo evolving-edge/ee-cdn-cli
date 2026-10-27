@@ -1,0 +1,18 @@
+{
+  "_comment": "Two Level 1 packages of one site, built by ee-builder (#560): one content hash, two random secrets. status is what GET /api/workloads/<hash>/status returns for the first; firstKey opens it, rebuildKey (the second package's) does not.",
+  "status": {
+    "hash": "1a851d09e30a140e95821dfdb2da27a3be65584a0237ccaa4c629a4ae6615f46",
+    "stored": true,
+    "level": 1,
+    "encryptionLevel": "level1",
+    "owned": true,
+    "size": 963,
+    "kdfSalt": "81e7f57ab436345dfaec9eebcb392db52c6ce5baaec86a4160619678b5fe4e72",
+    "kdfContentHash": "1a851d09e30a140e95821dfdb2da27a3be65584a0237ccaa4c629a4ae6615f46",
+    "indexNonce": "2309459e88218df03e7fa2c4",
+    "indexAuthTag": "5481cc433900df5476c4f4c0b60a4ac1",
+    "index": "FLPR40H8zPBemsO8rODTdBZWl7L1ZWaVo2JatpcwrawnFTuBWqmwcRaG6774hoGdg99vkerFfFj67BcrDQli6nL/uKj7VHsuxPbv9zSaVu4CuB3fedNMcWCIoq/9m1ZUkMqp5ogymJwZAUOkqI8/FnYP2xwuVz+2QxZbNA0yS16261UcroZjhmUa1vug7Syp3w7ILzEkqNNI+akUBk9fNZYnDG2WWTEVtXpwzLpLK7SKIx5IiGOr1hrCmylEsLwmFbeNk0w0EfYgYhL81JqgFKj913LhT+zfG5hkvbLfCrHJFjopXYOJTBiP+2YdQ9CINeZRGlJ1JORkVyCDKWNa4cEK7Q0DrmMGhhIvsAKZ1J5c2FIdRIdeqY/AvXv2jNzu/mD5LJPR74AcVxLNKR64Ung+zzaS/bPhhp2bYpRkZMUv756RgDdwz3oUczK0D3r+9Ly67qPYsyMexLYHnE1mjsOq7xO0OQAKexJvV+QBxaVjGEkPuebeldplJMjGKFZzsogwFSBzwVUTvmlVBta0mQdhrFINj04RF0wJ2Oto1V8sIej24TYiX9JJ"
+  },
+  "firstKey": "0i4Hcf_aAfymyWBo1dWmdEKDCC_jRZsUNBPbzLgUQ4aB5_V6tDY0XfrsnuvLOS21LGzluq7IakFgYZZ4tf5Ocg",
+  "rebuildKey": "JeylRQ7T0T4vIkRMpEMFvFanbfb3DNL5FKNBBEXNnFJ1bYL1_N9o_gaRqDIwYVcsbhcGBDhtKJEVCb8astGn8Q"
+}

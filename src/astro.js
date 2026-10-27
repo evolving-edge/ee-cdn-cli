@@ -40,7 +40,7 @@ import {
 import { computeDirectoryHash, loadCache, saveCache } from './content-hash.js';
 import { findHtmlFiles, transformHtml } from './html.js';
 import { deploySite } from './deploy.js';
-import { storeWorkload } from './upload.js';
+import { publishWorkload } from './upload.js';
 
 const DEFAULT_CDN_URL = 'https://cdn.3dge.app';
 
@@ -231,24 +231,21 @@ export default function eeCdn(options = {}) {
           // key it is given into the markup, handing the browser the long-lived
           // material the gateway model exists to withhold (#262).
           const entry = { hash: result.hash, level, embedKey };
-          if (level === 1) entry.key = toKey(result.secret, result.salt);
-          built[workload.name] = entry;
-
-          // A Level 1 key that isn't going into the page has to reach the
-          // operator some other way, or this just silently drops it (#241).
-          // It's already in workloads.json for anything that reads that file
-          // at build time; this is the one place it also reaches the console,
-          // matching #235's "return the key, don't drop it" for the portal.
-          if (level === 1 && !embedKey) {
-            logger.warn(
-              `${workload.name}: Level 1 key (not embedded in HTML, embedKey is off) — ${entry.key}`,
-            );
-          }
 
           if (willUpload) {
-            await storeWorkload({
+            // Content already stored at this level for this project is
+            // deployed as stored (#560): this build's new random bytes would be
+            // refused under the same hash. At Level 1 that needs a key this
+            // project already holds for the content, from the cache, that opens
+            // what is stored; the stored content's key is then the one used,
+            // and this build's is thrown away.
+            const cachedKeys = Object.values(cache)
+              .filter((e) => e && e.hash === result.hash && e.level === 1 && e.key)
+              .map((e) => e.key);
+            const published = await publishWorkload({
               filePath: out,
               hash: result.hash,
+              level,
               controlPlane,
               token,
               params: {
@@ -262,8 +259,26 @@ export default function eeCdn(options = {}) {
               // Level 2 only -- see secretHeader in upload.js. Without this the
               // control plane stores ciphertext it holds no key for.
               secret: level === 2 ? result.secret : null,
+              keys: cachedKeys,
               logger,
             });
+            if (level === 1) {
+              entry.key = published.uploaded ? toKey(result.secret, result.salt) : published.key;
+            }
+          } else if (level === 1) {
+            entry.key = toKey(result.secret, result.salt);
+          }
+          built[workload.name] = entry;
+
+          // A Level 1 key that isn't going into the page has to reach the
+          // operator some other way, or this just silently drops it (#241).
+          // It's already in workloads.json for anything that reads that file
+          // at build time; this is the one place it also reaches the console,
+          // matching #235's "return the key, don't drop it" for the portal.
+          if (level === 1 && !embedKey) {
+            logger.warn(
+              `${workload.name}: Level 1 key (not embedded in HTML, embedKey is off) — ${entry.key}`,
+            );
           }
 
           cache[cacheKey] = {
