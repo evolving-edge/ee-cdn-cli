@@ -265,6 +265,30 @@ describe('deploySite with content already stored', () => {
     assert.ok(cp.saw('/store-raw') && !cp.saw('/deploy'));
   });
 
+  // A control plane from before #560 has no status route: the request falls
+  // through to a metadata read that needs read:workloads, which a deploy
+  // token lacks, so it answers 403 (or 404 with a broader token).
+  for (const code of [403, 404]) {
+    it(`an older control plane answering ${code} gets the upload as before`, async () => {
+      const d = fresh(`old-${code}`);
+      const fb = fakeBuilder(d, rebuilt);
+      const calls = [];
+      globalThis.fetch = async (url) => {
+        calls.push(String(url));
+        const isStatus = String(url).includes('/status');
+        return {
+          ok: !isStatus,
+          status: isStatus ? code : 200,
+          statusText: isStatus ? 'Error' : 'OK',
+          text: async () => (isStatus ? '{"error":"Insufficient permissions"}' : '{}'),
+        };
+      };
+      const r = await deploySite(opts(d, { level: 2, builderPath: fb.bin, logger: recordingLogger() }));
+      assert.equal(r.uploaded, true);
+      assert.ok(calls.some((u) => u.includes('/store-raw')));
+    });
+  }
+
   it('content not stored is uploaded as before', async () => {
     const d = fresh('new');
     const fb = fakeBuilder(d, rebuilt);

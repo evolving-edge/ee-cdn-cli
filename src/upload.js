@@ -135,8 +135,11 @@ function secretHeader(secret) {
  */
 
 /**
- * GET /api/workloads/<hash>/status. Null from a control plane that predates
- * the route (404), so the caller uploads as it always has.
+ * GET /api/workloads/<hash>/status. Null when the control plane will not say,
+ * so the caller uploads as it always has: one that predates the route answers
+ * 404, or 403 to a deploy token, since the request falls through to a
+ * metadata read that needs read:workloads, which a deploy token lacks. The
+ * upload is authorised on its own.
  */
 export async function workloadStatus({ hash, controlPlane, token, projectId }) {
   const query = new URLSearchParams();
@@ -146,7 +149,7 @@ export async function workloadStatus({ hash, controlPlane, token, projectId }) {
     `${controlPlane.replace(/\/$/, '')}/api/workloads/${hash}/status` + (qs ? `?${qs}` : '');
   const res = await fetch(url, { headers: { Authorization: `Bearer ${token}` } });
   const text = await res.text();
-  if (res.status === 404) return null;
+  if (res.status === 404 || res.status === 403) return null;
   if (!res.ok) {
     throw new Error(
       `Could not ask the control plane whether ${hash.slice(0, 16)}… is stored: ` +
