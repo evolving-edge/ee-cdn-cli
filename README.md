@@ -70,14 +70,17 @@ For CI that has no Node of its own (Hugo, Zola, Jekyll, Pelican, mdBook, Sphinx,
     builder-version: 'X.Y.Z'
 ```
 
-This step receives your deploy token and uploads to your domain, so choose what it runs:
+This step receives your deploy token and uploads to your domain, and the packaging tool it downloads runs with that token too. Pin both:
 
-- **A commit SHA** (`@<sha> # v1.0.0`) is the only reference that can't change. Nothing new runs with your token until you change it, and a re-run deploys the same way.
-- **An exact tag** such as `@v1.0.0` names one release, but a tag can be moved.
-- **`@v1`** picks up every 1.x release automatically, including the version of this package each release runs, on the next run and without review.
-- **Never `@main`.**
+- **`builder-version`:** the packaging tool's version. Without it, each run downloads the latest release.
+- **The Action,** by one of:
+  - **a commit SHA** (`@<sha> # v1.0.0`), the only reference that can't change;
+  - **an exact tag** such as `@v1.0.0`, which names one release, but a tag can be moved;
+  - **`@v1`**, which picks up every 1.x release automatically, including the version of this package each release runs, without review.
 
-Each release's [notes](https://github.com/evolving-edge/deploy-action/releases) name the CLI version it runs. Set `builder-version` too, so a new ee-builder release can't change what a re-run uploads.
+  Never use `@main`.
+
+With a commit SHA and `builder-version`, nothing new runs with your token until you change them, and a re-run deploys the same way. Each release's [notes](https://github.com/evolving-edge/deploy-action/releases) name the CLI version it runs.
 
 This repository's own `action.yml` stays, so workflows that use `evolving-edge/ee-cdn-cli@v0.4.0` as the Action keep working. The inputs are the same: to move, change the `uses:` line.
 
