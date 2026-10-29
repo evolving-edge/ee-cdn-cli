@@ -345,6 +345,29 @@ export function builderArgs({ src, out, level, domain = null, images = null }) {
 }
 
 /**
+ * The environment ee-builder runs with: this process's, minus credentials (#832).
+ *
+ * ee-builder is downloaded at run time and, unless the caller pins
+ * --builder-version and commits the lockfile, is whatever was published last.
+ * It never needs the deploy token here: the CLI uploads, and builderArgs never
+ * passes -upload, the only path in ee-builder that reads EE_CDN_TOKEN. So the
+ * token, and anything else named like a credential (GITHUB_TOKEN, NPM_TOKEN,
+ * ACTIONS_*_TOKEN, *_SECRET, *_PASSWORD, *_API_KEY), is left out. Everything
+ * else is kept, PATH, HOME and the temp and locale variables included, so the
+ * builder runs as it did on every platform.
+ */
+export const BUILDER_ENV_DROPPED = /TOKEN|SECRET|PASSWORD|PASSWD|CREDENTIAL|API_?KEY|PRIVATE_?KEY/i;
+
+export function builderEnv(env = process.env) {
+  const out = {};
+  for (const [name, value] of Object.entries(env)) {
+    if (BUILDER_ENV_DROPPED.test(name)) continue;
+    out[name] = value;
+  }
+  return out;
+}
+
+/**
  * The image flags a builder lists in its usage, which every ee-builder prints
  * for -h. The flags are asked about directly, not the version: the builder
  * published from 19a3771 already reports image pipeline 1 on -version (the
@@ -354,6 +377,7 @@ export function builderArgs({ src, out, level, domain = null, images = null }) {
 export function builderImageFlags(builderPath) {
   const r = spawnSync(builderPath, ['-h'], {
     encoding: 'utf8',
+    env: builderEnv(),
     stdio: ['ignore', 'pipe', 'pipe'],
     timeout: 30000,
   });
@@ -473,6 +497,7 @@ export function requireImageSupport(builderPath, hint, why = '', needed = IMAGE_
 export function runBuilder(builderPath, { src, out, level, domain = null, images = null }) {
   const stdout = execFileSync(builderPath, builderArgs({ src, out, level, domain, images }), {
     encoding: 'utf8',
+    env: builderEnv(),
     stdio: ['ignore', 'pipe', 'inherit'],
   });
 
