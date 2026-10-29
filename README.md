@@ -70,7 +70,7 @@ For CI that has no Node of its own (Hugo, Zola, Jekyll, Pelican, mdBook, Sphinx,
     builder-version: 'X.Y.Z'
 ```
 
-This step receives your deploy token and uploads to your domain, and the packaging tool it downloads runs with that token too. Pin both:
+This step receives your deploy token and uploads to your domain, and the packaging tool it downloads runs with that token too. To control when either changes, pin both:
 
 - **`builder-version`:** the packaging tool's version. Without it, each run downloads the latest release.
 - **The Action,** by one of:
@@ -80,7 +80,7 @@ This step receives your deploy token and uploads to your domain, and the packagi
 
   Never use `@main`.
 
-With a commit SHA and `builder-version`, nothing new runs with your token until you change them, and a re-run deploys the same way. Each release's [notes](https://github.com/evolving-edge/deploy-action/releases) name the CLI version it runs.
+Each release's [notes](https://github.com/evolving-edge/deploy-action/releases) name the CLI version it runs.
 
 This repository's own `action.yml` stays, so workflows that use `evolving-edge/ee-cdn-cli@v0.4.0` as the Action keep working. The inputs are the same: to move, change the `uses:` line.
 
