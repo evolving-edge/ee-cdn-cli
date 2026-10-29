@@ -345,6 +345,47 @@ export function builderArgs({ src, out, level, domain = null, images = null }) {
 }
 
 /**
+ * The environment ee-builder runs with (#832): only what a Go program needs
+ * to run on each platform. Everything else, the deploy token included, is
+ * left out.
+ *
+ * ee-builder never needs the token or any other credential: the CLI uploads,
+ * and builderArgs never passes -upload, the only path in ee-builder that reads
+ * EE_CDN_TOKEN. An allowlist, not a list of credential-looking names, so
+ * SSH_AUTH_SOCK, DATABASE_URL, *_PAT and the like stay out too.
+ *
+ * What this protects against is accidental exposure: a builder that logs,
+ * reports or forwards its environment. It does not keep the token from a
+ * hostile builder, which runs as the same user and can read the parent
+ * process's environment (/proc/<pid>/environ on Linux) or files such as a CI
+ * checkout's .git/config. The control for that is pinning the builder:
+ * --builder-version with a committed .ee-builder-lock.json.
+ *
+ * Names are compared in upper case, because Windows treats them that way.
+ */
+export const BUILDER_ENV_NAMES = new Set([
+  'PATH', 'HOME', 'USER', 'LOGNAME', 'SHELL', 'TZ',
+  'TMPDIR', 'TEMP', 'TMP',
+  'LANG', 'LANGUAGE',
+  // Windows
+  'USERPROFILE', 'SYSTEMROOT', 'WINDIR', 'SYSTEMDRIVE', 'COMSPEC', 'PATHEXT',
+  'APPDATA', 'LOCALAPPDATA', 'PROGRAMDATA',
+  'NUMBER_OF_PROCESSORS', 'PROCESSOR_ARCHITECTURE',
+  // The Go runtime's own settings
+  'GODEBUG', 'GOMAXPROCS', 'GOGC', 'GOMEMLIMIT', 'GOTRACEBACK',
+]);
+const BUILDER_ENV_PREFIXES = ['LC_', 'XDG_'];
+
+export function builderEnv(env = process.env) {
+  const out = {};
+  for (const [name, value] of Object.entries(env)) {
+    const upper = name.toUpperCase();
+    if (BUILDER_ENV_NAMES.has(upper) || BUILDER_ENV_PREFIXES.some((p) => upper.startsWith(p))) out[name] = value;
+  }
+  return out;
+}
+
+/**
  * The image flags a builder lists in its usage, which every ee-builder prints
  * for -h. The flags are asked about directly, not the version: the builder
  * published from 19a3771 already reports image pipeline 1 on -version (the
@@ -354,6 +395,7 @@ export function builderArgs({ src, out, level, domain = null, images = null }) {
 export function builderImageFlags(builderPath) {
   const r = spawnSync(builderPath, ['-h'], {
     encoding: 'utf8',
+    env: builderEnv(),
     stdio: ['ignore', 'pipe', 'pipe'],
     timeout: 30000,
   });
@@ -473,6 +515,7 @@ export function requireImageSupport(builderPath, hint, why = '', needed = IMAGE_
 export function runBuilder(builderPath, { src, out, level, domain = null, images = null }) {
   const stdout = execFileSync(builderPath, builderArgs({ src, out, level, domain, images }), {
     encoding: 'utf8',
+    env: builderEnv(),
     stdio: ['ignore', 'pipe', 'inherit'],
   });
 
