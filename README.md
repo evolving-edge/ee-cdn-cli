@@ -61,7 +61,7 @@ For CI that has no Node of its own (Hugo, Zola, Jekyll, Pelican, mdBook, Sphinx,
   with:
     hugo-version: 'latest'
 - run: hugo --minify
-- uses: evolving-edge/deploy-action@v1
+- uses: evolving-edge/deploy-action@v1.0.0
   with:
     directory: public
     domain: blog.example.com
@@ -70,7 +70,7 @@ For CI that has no Node of its own (Hugo, Zola, Jekyll, Pelican, mdBook, Sphinx,
     builder-version: 'X.Y.Z'
 ```
 
-`@v1` gets every 1.x release of the Action; an exact version such as `@v1.0.0` stays on one release until you change it. Never use `@main`. Each release of the Action runs one fixed version of this package, named in its [release notes](https://github.com/evolving-edge/deploy-action/releases), so a new CLI version reaches your deploys only through a new Action release. Set `builder-version` too, so a new ee-builder release can't change what a re-run uploads.
+Pin an exact release, such as `@v1.0.0`, or a commit SHA. This step receives your deploy token and uploads to your domain, so with a pinned version nothing new runs with that token until you choose to update, and a re-run deploys the same way. `@v1` picks up every 1.x release automatically, including the version of this package each release runs, on the next run and without review. Never use `@main`. Each release's [notes](https://github.com/evolving-edge/deploy-action/releases) name the CLI version it runs. Set `builder-version` too, so a new ee-builder release can't change what a re-run uploads.
 
 This repository's own `action.yml` stays, so workflows that use `evolving-edge/ee-cdn-cli@v0.4.0` as the Action keep working. The inputs are the same: to move, change the `uses:` line.
 
