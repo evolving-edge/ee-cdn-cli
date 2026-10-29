@@ -66,30 +66,37 @@ const SECRETS = {
   AWS_SECRET_ACCESS_KEY: 'aws-832',
   DB_PASSWORD: 'pw-832',
   OPENAI_API_KEY: 'key-832',
+  // Credentials whose names don't say so: kept out by the allowlist.
+  SSH_AUTH_SOCK: '/tmp/ssh-agent-832',
+  DATABASE_URL: 'postgres://u:pass-832@db/x',
+  GH_PAT: 'pat-832',
+  GOOGLE_APPLICATION_CREDENTIALS: '/keys/gcp-832.json',
 };
 
 describe('builderEnv (#832)', () => {
-  it('leaves out the deploy token and anything named like a credential', () => {
+  it('leaves out the deploy token and every credential, whatever it is named', () => {
     const env = builderEnv({ ...SECRETS, PATH: '/bin', HOME: '/home/u' });
     for (const name of Object.keys(SECRETS)) assert.equal(name in env, false, `${name} should be left out`);
   });
 
-  it('keeps everything else, including the CLI settings that are not secrets', () => {
+  it('keeps what a Go program needs on each platform, and nothing else', () => {
     const kept = {
       PATH: '/usr/bin:/bin',
       HOME: '/home/u',
       TMPDIR: '/tmp',
       LANG: 'en_US.UTF-8',
-      SystemRoot: 'C:\\Windows',
-      EE_CDN_PROJECT_ID: 'proj_abc',
-      EE_BUILDER_VERSION: '1.2.3',
+      LC_ALL: 'C.UTF-8',
       XDG_CACHE_HOME: '/cache',
+      SystemRoot: 'C:\\Windows',
+      USERPROFILE: 'C:\\Users\\u',
+      GOMAXPROCS: '2',
     };
-    assert.deepEqual(builderEnv({ ...kept, ...SECRETS }), kept);
+    const dropped = { EE_CDN_PROJECT_ID: 'proj_abc', NODE_OPTIONS: '--x', CI: 'true' };
+    assert.deepEqual(builderEnv({ ...kept, ...dropped, ...SECRETS }), kept);
   });
 
-  it('matches names in any case', () => {
-    assert.deepEqual(builderEnv({ ee_cdn_token: 'x', Github_Token: 'y', path: '/bin' }), { path: '/bin' });
+  it('matches names in any case, as Windows does', () => {
+    assert.deepEqual(builderEnv({ ee_cdn_token: 'x', Path: 'C:\\bin', systemroot: 'C:\\Windows' }), { Path: 'C:\\bin', systemroot: 'C:\\Windows' });
   });
 });
 
