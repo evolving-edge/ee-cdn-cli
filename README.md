@@ -53,7 +53,7 @@ point `ee-deploy` at that folder.
 
 ## GitHub Action
 
-For CI that has no Node of its own (Hugo, Zola, Jekyll, Pelican, mdBook, Sphinx, MkDocs, Quarto and others usually build on Go, Ruby, Python or Rust images), this repository is also a GitHub Action. It runs `ee-deploy` from this package and brings its own Node, so the workflow needs no `actions/setup-node` step and no `npm install`:
+For CI that has no Node of its own (Hugo, Zola, Jekyll, Pelican, mdBook, Sphinx, MkDocs, Quarto and others usually build on Go, Ruby, Python or Rust images), use the GitHub Action, [`evolving-edge/deploy-action`](https://github.com/evolving-edge/deploy-action), listed on GitHub Marketplace as [Deploy to Evolving Edge CDN](https://github.com/marketplace/actions/deploy-to-evolving-edge-cdn). It runs `ee-deploy` from a pinned version of this package and brings its own Node, so the workflow needs no `actions/setup-node` step and no `npm install`:
 
 ```yaml
 - uses: actions/checkout@v5
@@ -61,7 +61,7 @@ For CI that has no Node of its own (Hugo, Zola, Jekyll, Pelican, mdBook, Sphinx,
   with:
     hugo-version: 'latest'
 - run: hugo --minify
-- uses: evolving-edge/ee-cdn-cli@vX.Y.Z
+- uses: evolving-edge/deploy-action@v1
   with:
     directory: public
     domain: blog.example.com
@@ -70,9 +70,11 @@ For CI that has no Node of its own (Hugo, Zola, Jekyll, Pelican, mdBook, Sphinx,
     builder-version: 'X.Y.Z'
 ```
 
-Replace `vX.Y.Z` with a release tag from [the tags list](https://github.com/evolving-edge/ee-cdn-cli/tags). Referring to `@main` instead means every change to this repository changes your deploys the moment it lands. For the same reason, set `builder-version` so a new ee-builder release can't change what a re-run uploads.
+`@v1` gets every 1.x release of the Action; an exact version such as `@v1.0.0` stays on one release until you change it. Never use `@main`. Each release of the Action runs one fixed version of this package, named in its [release notes](https://github.com/evolving-edge/deploy-action/releases), so a new CLI version reaches your deploys only through a new Action release. Set `builder-version` too, so a new ee-builder release can't change what a re-run uploads.
 
-Every input is described in `action.yml`; they match the CLI's flags. The ones that differ from the CLI:
+This repository's own `action.yml` stays, so workflows that use `evolving-edge/ee-cdn-cli@v0.4.0` as the Action keep working. The inputs are the same: to move, change the `uses:` line.
+
+Every input is described in the Action's [README](https://github.com/evolving-edge/deploy-action#inputs); they match the CLI's flags. The ones that differ from the CLI:
 
 - **`working-directory`**: where the project is, when it isn't at the root of the repository. Output-folder detection and relative paths start there.
 - **`dry-run: true`**: packages the site without uploading it, and needs no token. Use it to test a workflow before giving it a deploy token.
