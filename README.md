@@ -61,7 +61,7 @@ For CI that has no Node of its own (Hugo, Zola, Jekyll, Pelican, mdBook, Sphinx,
   with:
     hugo-version: 'latest'
 - run: hugo --minify
-- uses: evolving-edge/deploy-action@v1.0.0
+- uses: evolving-edge/deploy-action@v1.0.1
   with:
     directory: public
     domain: blog.example.com
@@ -74,8 +74,8 @@ This step receives your deploy token and uploads to your domain, and the packagi
 
 - **`builder-version`:** the packaging tool's version. Without it, each run downloads the latest release.
 - **The Action,** by one of:
-  - **a commit SHA** (`@<sha> # v1.0.0`), the only reference that can't change;
-  - **an exact tag** such as `@v1.0.0`, which names one release, but a tag can be moved;
+  - **a commit SHA** (`@<sha> # v1.0.1`), the only reference that can't change;
+  - **an exact tag** such as `@v1.0.1`, which names one release, but a tag can be moved;
   - **`@v1`**, which picks up every 1.x release automatically, including the version of this package each release runs, without review.
 
   Never use `@main`.
