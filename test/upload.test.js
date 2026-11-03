@@ -23,9 +23,11 @@ import {
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { pathToFileURL } from 'node:url';
+import { createServer } from 'node:http';
+import { createHash } from 'node:crypto';
 import { after, afterEach, describe, it } from 'node:test';
 
-import { storeWorkload } from '../src/upload.js';
+import { DEFAULT_MAX_BYTES, packageMaxBytes, storeWorkload } from '../src/upload.js';
 import { defaultCacheDir } from '../src/deploy.js';
 
 const scratch = mkdtempSync(join(tmpdir(), 'ee-upload-test-'));
@@ -36,10 +38,27 @@ afterEach(() => {
   globalThis.fetch = realFetch;
 });
 
-/** Records the request and replies with whatever the test asks for. */
-function stubFetch({ status = 200, statusText = 'OK', body = '{}' } = {}) {
+/**
+ * Records the request and replies with whatever the test asks for. The deploy
+ * paths first ask whether the content is already stored (#560), and the upload
+ * asks for the package limit (#823); both are answered as a control plane
+ * without the route answers them (404: upload, under the 1 GiB default) and
+ * are not recorded, so calls holds the upload alone.
+ * test/stored.test.js covers the question itself.
+ */
+function stubFetch({ status = 200, statusText = 'OK', body = '{}', limits = null } = {}) {
   const calls = [];
   globalThis.fetch = async (url, opts) => {
+    if (String(url).includes('/status')) {
+      return { ok: false, status: 404, statusText: 'Not Found', text: async () => 'Workload not found' };
+    }
+    // The package limit (#823): a control plane without the route by
+    // default; not recorded either.
+    if (String(url).endsWith('/api/limits')) {
+      return limits
+        ? { ok: true, status: 200, statusText: 'OK', text: async () => JSON.stringify(limits) }
+        : { ok: false, status: 404, statusText: 'Not Found', text: async () => '404 page not found' };
+    }
     calls.push({ url, opts });
     return {
       ok: status >= 200 && status < 300,
@@ -83,7 +102,18 @@ describe('storeWorkload request shape', () => {
       calls[0].opts.headers['Content-Type'],
       'application/octet-stream',
     );
-    assert.equal(calls[0].opts.body.toString(), 'ee-workload-bytes');
+    assert.equal(await new Response(calls[0].opts.body).text(), 'ee-workload-bytes');
+  });
+
+  // #819: the package streams from disk, with its exact Content-Length, so
+  // the control plane can refuse an oversized one before reading it.
+  it('streams the file with its Content-Length instead of reading it whole', async () => {
+    const calls = stubFetch();
+    await call();
+    const { body, headers, duplex } = calls[0].opts;
+    assert.equal(headers['Content-Length'], String('ee-workload-bytes'.length));
+    assert.ok(body instanceof ReadableStream, 'body is a stream, not a buffer');
+    assert.equal(duplex, 'half');
   });
 
   it('always sends the hash', async () => {
@@ -143,17 +173,64 @@ describe('storeWorkload request shape', () => {
 });
 
 describe('storeWorkload size cap', () => {
-  it('refuses a body over 100 MB before making a request', async () => {
-    const big = join(scratch, 'big.ee');
-    writeFileSync(big, '');
-    truncateSync(big, 101 * 1024 * 1024); // sparse — costs no disk
-    const calls = stubFetch();
+  // Sparse files cost no disk.
+  function sparse(name, size) {
+    const p = join(scratch, name);
+    writeFileSync(p, '');
+    truncateSync(p, size);
+    return p;
+  }
+
+  it('refuses a package over the limit the control plane reports, before uploading', async () => {
+    const calls = stubFetch({ limits: { packageMaxBytes: 100 * 1024 * 1024 } });
     await assert.rejects(
-      () => call({ filePath: big }),
+      () => call({ filePath: sparse('big.ee', 101 * 1024 * 1024) }),
       /Workload is 101\.0 MiB; .* over 100 MiB/,
     );
     // The point of the cap is to fail locally, not to be told by the server.
     assert.equal(calls.length, 0);
+  });
+
+  it('uploads a package at the reported limit', async () => {
+    const calls = stubFetch({ limits: { packageMaxBytes: 2 * 1024 * 1024 } });
+    await call({ filePath: sparse('at-limit.ee', 2 * 1024 * 1024) });
+    assert.equal(calls.length, 1);
+  });
+
+  it('falls back to 1 GiB when the control plane does not say (404)', async () => {
+    let calls = stubFetch();
+    await assert.rejects(
+      () => call({ filePath: sparse('huge.ee', 1024 * 1024 * 1024 + 1) }),
+      /Workload is 1024\.0 MiB; .* over 1 GiB/,
+    );
+    assert.equal(calls.length, 0);
+    // Over the old 100 MiB limit, under 1 GiB: uploaded.
+    calls = stubFetch();
+    await call({ filePath: sparse('mid.ee', 101 * 1024 * 1024) });
+    assert.equal(calls.length, 1);
+    assert.equal(calls[0].opts.headers['Content-Length'], String(101 * 1024 * 1024));
+  });
+
+  it('falls back to 1 GiB on an answer that is not a size, or no answer', async () => {
+    for (const limits of [{ packageMaxBytes: 'big' }, { packageMaxBytes: -1 }, { packageMaxBytes: 1.5 }, {}]) {
+      stubFetch({ limits });
+      assert.equal(await packageMaxBytes({ controlPlane: 'https://cp.example.test' }), DEFAULT_MAX_BYTES, JSON.stringify(limits));
+    }
+    globalThis.fetch = async () => {
+      throw new Error('connect ECONNREFUSED');
+    };
+    assert.equal(await packageMaxBytes({ controlPlane: 'https://cp.example.test/' }), DEFAULT_MAX_BYTES);
+    assert.equal(DEFAULT_MAX_BYTES, 1024 * 1024 * 1024);
+  });
+
+  it('asks the control plane it uploads to', async () => {
+    const asked = [];
+    globalThis.fetch = async (url) => {
+      asked.push(String(url));
+      return { ok: true, status: 200, statusText: 'OK', text: async () => '{"packageMaxBytes":5}' };
+    };
+    assert.equal(await packageMaxBytes({ controlPlane: 'https://cp.example.test/' }), 5);
+    assert.deepEqual(asked, ['https://cp.example.test/api/limits']);
   });
 });
 
@@ -568,5 +645,52 @@ describe('#262 regressions reachable around the upload', () => {
       /no secret\/salt/,
     );
     assert.equal(calls.length, 0, 'nothing may be uploaded without the secret');
+  });
+});
+
+// The streamed body against a real HTTP server, through Node's own fetch: the
+// server sees the announced Content-Length (no chunked encoding) and every
+// byte of the file.
+describe('storeWorkload over HTTP', () => {
+  it('sends the whole file with its Content-Length', async () => {
+    const size = 5 * 1024 * 1024 + 3;
+    const bytes = Buffer.alloc(size);
+    for (let i = 0; i < size; i++) bytes[i] = (i * 31) & 0xff;
+    const filePath = workload('stream.ee', bytes);
+    let seen;
+    const server = createServer((req, res) => {
+      const hash = createHash('sha256');
+      let n = 0;
+      req.on('data', (c) => {
+        n += c.length;
+        hash.update(c);
+      });
+      req.on('end', () => {
+        seen = {
+          length: req.headers['content-length'],
+          chunked: req.headers['transfer-encoding'],
+          n,
+          sum: hash.digest('hex'),
+        };
+        res.end(JSON.stringify({ stored: true }));
+      });
+    });
+    await new Promise((r) => server.listen(0, '127.0.0.1', r));
+    try {
+      const { port } = server.address();
+      await storeWorkload({
+        filePath,
+        hash: HASH,
+        controlPlane: `http://127.0.0.1:${port}`,
+        token: 't',
+        logger: quietLogger,
+      });
+    } finally {
+      server.close();
+    }
+    assert.equal(seen.length, String(size));
+    assert.equal(seen.chunked, undefined);
+    assert.equal(seen.n, size);
+    assert.equal(seen.sum, createHash('sha256').update(bytes).digest('hex'));
   });
 });

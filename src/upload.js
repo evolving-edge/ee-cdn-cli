@@ -10,7 +10,9 @@
  * with the single documented call, which also creates the deploy alias and the
  * mutable "latest" alias server-side.
  */
-import { readFileSync, statSync } from 'node:fs';
+import { createDecipheriv, hkdfSync } from 'node:crypto';
+import { createReadStream, statSync } from 'node:fs';
+import { Readable } from 'node:stream';
 
 /** Query params handleWorkloadStoreRaw understands. */
 const PASSTHROUGH = [
@@ -27,13 +29,36 @@ const PASSTHROUGH = [
 ];
 
 /**
- * The control plane caps request bodies at 100 MiB — handleWorkloadStoreRaw
- * wraps the body in `http.MaxBytesReader(w, r.Body, 100<<20)`. Mirrored here so
- * an oversized workload fails locally with a clear message rather than as a
- * truncated read on their side.
+ * The largest package the control plane accepts, when it does not say: 1 GiB,
+ * its default since #823 (100 MiB before). A control plane that predates
+ * GET /api/limits answers it 404, and this is used.
  */
-const MAX_BYTES = 100 * 1024 * 1024;
+export const DEFAULT_MAX_BYTES = 1024 * 1024 * 1024;
 const MIB = 1024 * 1024;
+
+/**
+ * The package limit the control plane reports (GET /api/limits,
+ * `packageMaxBytes`, #820), or DEFAULT_MAX_BYTES when it does not say: an
+ * older control plane (404), an error, or an answer that is not a size. The
+ * control plane enforces its own limit either way (413 from Content-Length,
+ * before it reads the body, #819); this is so an oversized package fails
+ * locally, before any byte is sent, with a clear message.
+ */
+export async function packageMaxBytes({ controlPlane }) {
+  try {
+    const res = await fetch(`${controlPlane.replace(/\/$/, '')}/api/limits`);
+    if (!res.ok) return DEFAULT_MAX_BYTES;
+    const body = JSON.parse(await res.text());
+    const n = body?.packageMaxBytes;
+    return Number.isSafeInteger(n) && n > 0 ? n : DEFAULT_MAX_BYTES;
+  } catch {
+    return DEFAULT_MAX_BYTES;
+  }
+}
+
+function formatLimit(bytes) {
+  return bytes % (1024 * MIB) === 0 ? `${bytes / (1024 * MIB)} GiB` : `${(bytes / MIB).toFixed(bytes % MIB ? 1 : 0)} MiB`;
+}
 
 export async function storeWorkload({
   filePath,
@@ -42,13 +67,15 @@ export async function storeWorkload({
   token,
   params = {},
   secret = null,
+  maxBytes,
   logger,
 }) {
   const { size } = statSync(filePath);
-  if (size > MAX_BYTES) {
+  const limit = maxBytes ?? (await packageMaxBytes({ controlPlane }));
+  if (size > limit) {
     throw new Error(
       `Workload is ${(size / MIB).toFixed(1)} MiB; the control plane rejects ` +
-        `bodies over ${MAX_BYTES / MIB} MiB.`,
+        `packages over ${formatLimit(limit)}.`,
     );
   }
 
@@ -66,9 +93,14 @@ export async function storeWorkload({
     headers: {
       Authorization: `Bearer ${token}`,
       'Content-Type': 'application/octet-stream',
+      'Content-Length': String(size),
       ...secretHeader(secret),
     },
-    body: readFileSync(filePath),
+    // Streamed from disk, never read whole (#819), with its exact length so
+    // the control plane can refuse an oversized package before reading it.
+    // Node's fetch needs duplex: 'half' for a streamed body.
+    body: uploadBody(filePath, size),
+    duplex: 'half',
   });
 
   const text = await res.text();
@@ -90,6 +122,15 @@ export async function storeWorkload({
       (body.alias ? ` (alias ${body.alias})` : ''),
   );
   return body;
+}
+
+/**
+ * The package as a stream of exactly `size` bytes, the size the request's
+ * Content-Length announced (a file that grew since would otherwise send more).
+ */
+export function uploadBody(filePath, size) {
+  if (size === 0) return new Uint8Array(0);
+  return Readable.toWeb(createReadStream(filePath, { start: 0, end: size - 1 }));
 }
 
 /**
@@ -118,6 +159,187 @@ export async function storeWorkload({
  */
 function secretHeader(secret) {
   return secret ? { 'X-EE-Workload-Secret': secret } : {};
+}
+
+/**
+ * Deploying content the control plane already holds (#560).
+ *
+ * A Level 1 or Level 2 package gets a fresh random secret and salt on every
+ * build, so packaging unchanged content again gives the same content hash and
+ * different bytes, and the control plane refuses that upload with 409: a hash
+ * keeps its first bytes. A rollback re-uploads an earlier hash and meets the
+ * same check. So before uploading, ask whether the hash is stored, and when it
+ * is stored at the level asked for and this project owns it, deploy the stored
+ * workload instead (POST /api/workloads/<hash>/deploy, no body). The new
+ * package, and the key it was built with, are thrown away.
+ */
+
+/**
+ * GET /api/workloads/<hash>/status. Null when the control plane will not say,
+ * so the caller uploads as it always has: one that predates the route answers
+ * 404, or 403 to a deploy token, since the request falls through to a
+ * metadata read that needs read:workloads, which a deploy token lacks. The
+ * upload is authorised on its own.
+ */
+export async function workloadStatus({ hash, controlPlane, token, projectId }) {
+  const query = new URLSearchParams();
+  if (projectId) query.set('projectId', projectId);
+  const qs = query.toString();
+  const url =
+    `${controlPlane.replace(/\/$/, '')}/api/workloads/${hash}/status` + (qs ? `?${qs}` : '');
+  const res = await fetch(url, { headers: { Authorization: `Bearer ${token}` } });
+  const text = await res.text();
+  if (res.status === 404 || res.status === 403) return null;
+  if (!res.ok) {
+    throw new Error(
+      `Could not ask the control plane whether ${hash.slice(0, 16)}… is stored: ` +
+        `${res.status} ${res.statusText}\n${text}\n` + explain(res.status),
+    );
+  }
+  try {
+    return JSON.parse(text);
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Whether a Level 1 key (base64url of the 32-byte secret and the 32-byte salt,
+ * the value after #key=) opens the stored workload: it decrypts the stored
+ * index, which is the first thing a browser holding it does. Same derivation
+ * as the builder and the browser: HKDF-SHA256 over secret || contentHash.
+ */
+export function level1KeyOpens(key, status) {
+  let raw;
+  try {
+    // Padding stripped with a loop, not /=+$/: that pattern backtracks
+    // quadratically on a long run of '=' that isn't at the end (CodeQL).
+    let k = String(key);
+    let end = k.length;
+    while (end > 0 && k[end - 1] === '=') end--;
+    raw = Buffer.from(k.slice(0, end), 'base64url');
+  } catch {
+    return false;
+  }
+  if (raw.length !== 64 || !status?.index || !/^[0-9a-f]{64}$/.test(status.kdfContentHash ?? '')) {
+    return false;
+  }
+  try {
+    const ikm = Buffer.concat([raw.subarray(0, 32), Buffer.from(status.kdfContentHash, 'hex')]);
+    const master = Buffer.from(hkdfSync('sha256', ikm, raw.subarray(32), 'ee-master-key', 32));
+    const indexKey = Buffer.from(hkdfSync('sha256', master, Buffer.alloc(0), 'ee-index-key', 32));
+    const decipher = createDecipheriv('aes-256-gcm', indexKey, Buffer.from(status.indexNonce, 'hex'));
+    decipher.setAuthTag(Buffer.from(status.indexAuthTag, 'hex'));
+    decipher.update(Buffer.from(status.index, 'base64'));
+    decipher.final();
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * Decide between uploading and deploying what is stored.
+ *
+ * Returns { useStored: false } to upload, or { useStored: true, key } to deploy
+ * the stored workload, where key is the Level 1 key that opens it. Throws when
+ * neither can succeed. keys are the Level 1 keys the caller holds for this
+ * content (its cache, or one given by hand), tried in order.
+ */
+export function decideStored(status, level, keys = []) {
+  if (!status?.stored) return { useStored: false };
+  // Not this project's to deploy without its bytes: the upload decides
+  // (identical bytes of a workload nobody owns are accepted, another
+  // project's workload is refused, other bytes are refused).
+  if (!status.owned) return { useStored: false };
+  if (status.level !== level) {
+    throw new Error(
+      `This content is already stored at Level ${status.level}, and this deploy is Level ${level}. ` +
+        `Deploy it at Level ${status.level}, or change the content.`,
+    );
+  }
+  if (level === 2) {
+    // With no secret held the gateways cannot decrypt it. Uploading identical
+    // bytes with their secret registers one; other bytes are refused.
+    return { useStored: Boolean(status.secretHeld) };
+  }
+  if (level === 1) {
+    const key = keys.filter(Boolean).find((k) => level1KeyOpens(k, status));
+    if (!key) {
+      throw new Error(
+        'This content is already stored at Level 1, under the key from its first deploy. ' +
+          'A new package cannot be uploaded over it, and its new key would open nothing. ' +
+          'Pass that key with --key (the value after #key= in the site\'s links); ' +
+          (keys.filter(Boolean).length ? 'the key given does not open the stored content.' : 'no key was given or cached.'),
+      );
+    }
+    return { useStored: true, key };
+  }
+  return { useStored: true };
+}
+
+/** POST /api/workloads/<hash>/deploy: the same query as store-raw, no body. */
+export async function deployStoredWorkload({ hash, controlPlane, token, params = {}, logger }) {
+  const query = new URLSearchParams();
+  for (const key of PASSTHROUGH) {
+    const value = params[key];
+    if (value !== undefined && value !== null && value !== '') {
+      query.set(key, String(value));
+    }
+  }
+  const url = `${controlPlane.replace(/\/$/, '')}/api/workloads/${hash}/deploy?${query}`;
+  const res = await fetch(url, {
+    method: 'POST',
+    headers: { Authorization: `Bearer ${token}` },
+  });
+  const text = await res.text();
+  if (!res.ok) {
+    throw new Error(
+      `Deploy of the stored workload failed: ${res.status} ${res.statusText}\n${text}\n` +
+        explain(res.status),
+    );
+  }
+  let body = {};
+  try {
+    body = JSON.parse(text);
+  } catch {
+    // Accepted; nothing more to report.
+  }
+  logger.info(
+    `Already stored at Level ${String(params.encryptionLevel ?? '').replace('level', '')}: nothing uploaded — ` +
+      `${hash.slice(0, 16)}…` + (body.alias ? ` (alias ${body.alias})` : ''),
+  );
+  return body;
+}
+
+/**
+ * Publish a packaged workload: deploy the stored one when decideStored says
+ * so, else upload the package. Returns { uploaded, key }, key being the
+ * stored workload's Level 1 key on a deploy without upload.
+ */
+export async function publishWorkload({
+  filePath,
+  hash,
+  level,
+  controlPlane,
+  token,
+  params = {},
+  secret = null,
+  keys = [],
+  beforeUpload = null,
+  logger,
+}) {
+  const status = await workloadStatus({ hash, controlPlane, token, projectId: params.projectId });
+  const decision = decideStored(status, level, keys);
+  if (decision.useStored) {
+    await deployStoredWorkload({ hash, controlPlane, token, params, logger });
+    return { uploaded: false, key: decision.key ?? null };
+  }
+  // Runs once the upload is chosen and before any bytes are sent, so a
+  // caller can keep this package's key even if the upload's response is lost.
+  if (beforeUpload) beforeUpload();
+  await storeWorkload({ filePath, hash, controlPlane, token, params, secret, logger });
+  return { uploaded: true, key: null };
 }
 
 /** Turn the failure modes we know about into something actionable. */
