@@ -340,6 +340,51 @@ describe('Astro Level 1 sub-workload already stored', () => {
     assert.ok(!log.lines.join('\n').includes(FIXTURE.rebuildKey), 'the rebuild\'s key is never printed');
   });
 
+  it('keeps and shows a first upload\'s key before sending it, so a lost response loses no key', async () => {
+    const root = fresh('astro-lost');
+    mkdirSync(join(root, 'assets'), { recursive: true });
+    writeFileSync(join(root, 'assets', 'a.txt'), 'content');
+    const fb = fakeBuilder(root, first);
+
+    // Not stored yet; the upload reaches the control plane (which stores it)
+    // but its response never comes back.
+    const sent = [];
+    globalThis.fetch = async (url) => {
+      const u = String(url);
+      sent.push(u);
+      if (u.includes('/status')) {
+        return { ok: true, status: 200, statusText: 'OK', text: async () => JSON.stringify({ hash: HASH, stored: false }) };
+      }
+      throw new Error('socket hang up');
+    };
+    const eeCdn = (await import('../src/astro.js')).default;
+    const integration = eeCdn({
+      workloads: [{ name: 'w', src: 'assets', level: 1 }],
+      builderPath: 'fake-ee-builder',
+      controlPlane: 'https://cp.example.test',
+      token: 't',
+      deploy: { domain: 'example.com', projectId: 'proj_a' },
+      outputFile: 'workloads.json',
+      cacheFile: '.cache.json',
+    });
+    const log = recordingLogger();
+    integration.hooks['astro:config:setup']({ config: { root: pathToFileURL(`${root}/`), build: {} }, logger: log });
+    await assert.rejects(integration.hooks['astro:build:start']({ logger: log }), /socket hang up/);
+    assert.ok(sent.some((u) => u.includes('/store-raw')), 'the upload was sent');
+    assert.match(log.lines.join('\n'), new RegExp(FIXTURE.firstKey), 'the key was shown before the upload');
+    const cached = Object.values(JSON.parse(readFileSync(join(root, '.cache.json'), 'utf8')));
+    assert.equal(cached.length, 1);
+    assert.equal(cached[0].key, FIXTURE.firstKey);
+    assert.equal(cached[0].uploaded, false, 'not marked uploaded, so the next build asks again');
+
+    // The next build finds the content stored and opens it with that key.
+    fb.set(rebuilt);
+    const cp = controlPlane(L1);
+    await runAstro(root, 'w');
+    assert.ok(cp.saw('/deploy?') && !cp.saw('/store-raw'));
+    assert.equal(JSON.parse(readFileSync(join(root, 'workloads.json'), 'utf8')).w.key, FIXTURE.firstKey);
+  });
+
   it('fails with an empty key cache', async () => {
     const root = fresh('astro-empty');
     mkdirSync(join(root, 'assets'), { recursive: true });

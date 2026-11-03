@@ -281,6 +281,7 @@ export async function publishWorkload({
   params = {},
   secret = null,
   keys = [],
+  beforeUpload = null,
   logger,
 }) {
   const status = await workloadStatus({ hash, controlPlane, token, projectId: params.projectId });
@@ -289,6 +290,9 @@ export async function publishWorkload({
     await deployStoredWorkload({ hash, controlPlane, token, params, logger });
     return { uploaded: false, key: decision.key ?? null };
   }
+  // Runs once the upload is chosen and before any bytes are sent, so a
+  // caller can keep this package's key even if the upload's response is lost.
+  if (beforeUpload) beforeUpload();
   await storeWorkload({ filePath, hash, controlPlane, token, params, secret, logger });
   return { uploaded: true, key: null };
 }

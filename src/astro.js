@@ -231,6 +231,18 @@ export default function eeCdn(options = {}) {
           // key it is given into the markup, handing the browser the long-lived
           // material the gateway model exists to withhold (#262).
           const entry = { hash: result.hash, level, embedKey };
+          // A Level 1 key that isn't going into the page has to reach the
+          // operator some other way, or this just silently drops it (#241).
+          // It's already in workloads.json for anything that reads that file
+          // at build time; this is the one place it also reaches the console,
+          // matching #235's "return the key, don't drop it" for the portal.
+          const announceKey = () => {
+            if (level === 1 && !embedKey) {
+              logger.warn(
+                `${workload.name}: Level 1 key (not embedded in HTML, embedKey is off) — ${entry.key}`,
+              );
+            }
+          };
 
           if (willUpload) {
             // Content already stored at this level for this project is
@@ -260,26 +272,37 @@ export default function eeCdn(options = {}) {
               // control plane stores ciphertext it holds no key for.
               secret: level === 2 ? result.secret : null,
               keys: cachedKeys,
+              // Uploading this build: its key is kept and shown before any
+              // bytes are sent. An upload that stores the container but loses
+              // its response would otherwise throw with the key nowhere, and
+              // every later build would find the content stored under a key it
+              // doesn't have. The entry is not marked uploaded, so the next
+              // build still checks with the control plane.
+              beforeUpload: () => {
+                if (level !== 1) return;
+                entry.key = toKey(result.secret, result.salt);
+                cache[cacheKey] = {
+                  hash: entry.hash,
+                  level,
+                  key: entry.key,
+                  uploaded: false,
+                  builtAt: new Date().toISOString(),
+                };
+                saveCache(join(projectRoot, cacheFile), cache);
+                announceKey();
+              },
               logger,
             });
-            if (level === 1) {
-              entry.key = published.uploaded ? toKey(result.secret, result.salt) : published.key;
+            if (level === 1 && !published.uploaded) {
+              // The stored content's key, never this build's.
+              entry.key = published.key;
+              announceKey();
             }
           } else if (level === 1) {
             entry.key = toKey(result.secret, result.salt);
+            announceKey();
           }
           built[workload.name] = entry;
-
-          // A Level 1 key that isn't going into the page has to reach the
-          // operator some other way, or this just silently drops it (#241).
-          // It's already in workloads.json for anything that reads that file
-          // at build time; this is the one place it also reaches the console,
-          // matching #235's "return the key, don't drop it" for the portal.
-          if (level === 1 && !embedKey) {
-            logger.warn(
-              `${workload.name}: Level 1 key (not embedded in HTML, embedKey is off) — ${entry.key}`,
-            );
-          }
 
           cache[cacheKey] = {
             hash: entry.hash,
