@@ -212,7 +212,12 @@ export async function workloadStatus({ hash, controlPlane, token, projectId }) {
 export function level1KeyOpens(key, status) {
   let raw;
   try {
-    raw = Buffer.from(String(key).replace(/=+$/, ''), 'base64url');
+    // Padding stripped with a loop, not /=+$/: that pattern backtracks
+    // quadratically on a long run of '=' that isn't at the end (CodeQL).
+    let k = String(key);
+    let end = k.length;
+    while (end > 0 && k[end - 1] === '=') end--;
+    raw = Buffer.from(k.slice(0, end), 'base64url');
   } catch {
     return false;
   }

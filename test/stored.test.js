@@ -120,6 +120,10 @@ describe('a Level 1 key against the stored workload', () => {
   it('opens it with the first deploy\'s key, and not with a rebuild\'s', () => {
     assert.equal(level1KeyOpens(FIXTURE.firstKey, L1), true);
     assert.equal(level1KeyOpens(`${FIXTURE.firstKey}=`, L1), true, 'padding is tolerated');
+    // A long run of '=' not at the end is refused at once (no backtracking).
+    const t0 = performance.now();
+    assert.equal(level1KeyOpens('='.repeat(100000) + 'x', L1), false);
+    assert.ok(performance.now() - t0 < 200, 'a long run of = is handled in linear time');
     assert.equal(level1KeyOpens(FIXTURE.rebuildKey, L1), false);
     assert.equal(level1KeyOpens('not-a-key', L1), false);
     assert.equal(level1KeyOpens(FIXTURE.firstKey, { ...L1, index: '' }), false);
