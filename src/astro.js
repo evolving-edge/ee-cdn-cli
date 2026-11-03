@@ -252,8 +252,9 @@ export default function eeCdn(options = {}) {
             // what is stored; the stored content's key is then the one used,
             // and this build's is thrown away.
             const cachedKeys = Object.values(cache)
-              .filter((e) => e && e.hash === result.hash && e.level === 1 && e.key)
-              .map((e) => e.key);
+              .filter((e) => e && e.hash === result.hash && e.level === 1)
+              .flatMap((e) => [e.key, ...(e.previousKeys ?? [])])
+              .filter(Boolean);
             const published = await publishWorkload({
               filePath: out,
               hash: result.hash,
@@ -281,10 +282,18 @@ export default function eeCdn(options = {}) {
               beforeUpload: () => {
                 if (level !== 1) return;
                 entry.key = toKey(result.secret, result.salt);
+                // An earlier key for this content may be the one that opens
+                // what is stored (its upload's response was lost). If this
+                // upload is refused, say for another project's token, it must
+                // still be here for the next build, so it is kept alongside.
+                const prev = cache[cacheKey];
+                const previousKeys = [...new Set([...(prev?.previousKeys ?? []), prev?.key])]
+                  .filter((k) => k && k !== entry.key);
                 cache[cacheKey] = {
                   hash: entry.hash,
                   level,
                   key: entry.key,
+                  ...(previousKeys.length ? { previousKeys } : {}),
                   uploaded: false,
                   builtAt: new Date().toISOString(),
                 };

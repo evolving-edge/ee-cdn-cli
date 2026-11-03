@@ -385,6 +385,41 @@ describe('Astro Level 1 sub-workload already stored', () => {
     assert.equal(JSON.parse(readFileSync(join(root, 'workloads.json'), 'utf8')).w.key, FIXTURE.firstKey);
   });
 
+  it('keeps a lost upload\'s key when a retry\'s upload is refused', async () => {
+    const root = fresh('astro-refused');
+    mkdirSync(join(root, 'assets'), { recursive: true });
+    writeFileSync(join(root, 'assets', 'a.txt'), 'content');
+    const fb = fakeBuilder(root, first);
+
+    // The first upload stores the package but its response is lost: the
+    // first key is cached, not marked uploaded.
+    globalThis.fetch = async (url) => {
+      const u = String(url);
+      if (u.includes('/status')) {
+        return { ok: true, status: 200, statusText: 'OK', text: async () => JSON.stringify({ hash: HASH, stored: false }) };
+      }
+      throw new Error('socket hang up');
+    };
+    await assert.rejects(runAstro(root, 'w'), /socket hang up/);
+
+    // A retry with another project's token: the content is not this
+    // caller's, so it uploads its rebuild, and the control plane refuses it.
+    fb.set(rebuilt);
+    globalThis.fetch = async (url) => {
+      const u = String(url);
+      const reply = (code, body) => ({ ok: code < 300, status: code, statusText: 'x', text: async () => JSON.stringify(body) });
+      if (u.includes('/status')) return reply(200, { ...L1, owned: false });
+      return reply(403, { error: 'not the workload owner' });
+    };
+    await assert.rejects(runAstro(root, 'w'));
+
+    // With the right token, the first key still opens what is stored.
+    const cp = controlPlane(L1);
+    await runAstro(root, 'w');
+    assert.ok(cp.saw('/deploy?') && !cp.saw('/store-raw'));
+    assert.equal(JSON.parse(readFileSync(join(root, 'workloads.json'), 'utf8')).w.key, FIXTURE.firstKey);
+  });
+
   it('fails with an empty key cache', async () => {
     const root = fresh('astro-empty');
     mkdirSync(join(root, 'assets'), { recursive: true });
