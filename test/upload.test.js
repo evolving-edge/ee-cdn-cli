@@ -27,7 +27,7 @@ import { createServer } from 'node:http';
 import { createHash } from 'node:crypto';
 import { after, afterEach, describe, it } from 'node:test';
 
-import { storeWorkload } from '../src/upload.js';
+import { DEFAULT_MAX_BYTES, packageMaxBytes, storeWorkload } from '../src/upload.js';
 import { defaultCacheDir } from '../src/deploy.js';
 
 const scratch = mkdtempSync(join(tmpdir(), 'ee-upload-test-'));
@@ -40,16 +40,24 @@ afterEach(() => {
 
 /**
  * Records the request and replies with whatever the test asks for. The deploy
- * paths first ask whether the content is already stored (#560); that question
- * is answered as a control plane without the route answers it (404, so the
- * client uploads) and is not recorded, so calls holds the upload alone.
+ * paths first ask whether the content is already stored (#560), and the upload
+ * asks for the package limit (#823); both are answered as a control plane
+ * without the route answers them (404: upload, under the 1 GiB default) and
+ * are not recorded, so calls holds the upload alone.
  * test/stored.test.js covers the question itself.
  */
-function stubFetch({ status = 200, statusText = 'OK', body = '{}' } = {}) {
+function stubFetch({ status = 200, statusText = 'OK', body = '{}', limits = null } = {}) {
   const calls = [];
   globalThis.fetch = async (url, opts) => {
     if (String(url).includes('/status')) {
       return { ok: false, status: 404, statusText: 'Not Found', text: async () => 'Workload not found' };
+    }
+    // The package limit (#823): a control plane without the route by
+    // default; not recorded either.
+    if (String(url).endsWith('/api/limits')) {
+      return limits
+        ? { ok: true, status: 200, statusText: 'OK', text: async () => JSON.stringify(limits) }
+        : { ok: false, status: 404, statusText: 'Not Found', text: async () => '404 page not found' };
     }
     calls.push({ url, opts });
     return {
@@ -165,17 +173,64 @@ describe('storeWorkload request shape', () => {
 });
 
 describe('storeWorkload size cap', () => {
-  it('refuses a body over 100 MB before making a request', async () => {
-    const big = join(scratch, 'big.ee');
-    writeFileSync(big, '');
-    truncateSync(big, 101 * 1024 * 1024); // sparse — costs no disk
-    const calls = stubFetch();
+  // Sparse files cost no disk.
+  function sparse(name, size) {
+    const p = join(scratch, name);
+    writeFileSync(p, '');
+    truncateSync(p, size);
+    return p;
+  }
+
+  it('refuses a package over the limit the control plane reports, before uploading', async () => {
+    const calls = stubFetch({ limits: { packageMaxBytes: 100 * 1024 * 1024 } });
     await assert.rejects(
-      () => call({ filePath: big }),
+      () => call({ filePath: sparse('big.ee', 101 * 1024 * 1024) }),
       /Workload is 101\.0 MiB; .* over 100 MiB/,
     );
     // The point of the cap is to fail locally, not to be told by the server.
     assert.equal(calls.length, 0);
+  });
+
+  it('uploads a package at the reported limit', async () => {
+    const calls = stubFetch({ limits: { packageMaxBytes: 2 * 1024 * 1024 } });
+    await call({ filePath: sparse('at-limit.ee', 2 * 1024 * 1024) });
+    assert.equal(calls.length, 1);
+  });
+
+  it('falls back to 1 GiB when the control plane does not say (404)', async () => {
+    let calls = stubFetch();
+    await assert.rejects(
+      () => call({ filePath: sparse('huge.ee', 1024 * 1024 * 1024 + 1) }),
+      /Workload is 1024\.0 MiB; .* over 1 GiB/,
+    );
+    assert.equal(calls.length, 0);
+    // Over the old 100 MiB limit, under 1 GiB: uploaded.
+    calls = stubFetch();
+    await call({ filePath: sparse('mid.ee', 101 * 1024 * 1024) });
+    assert.equal(calls.length, 1);
+    assert.equal(calls[0].opts.headers['Content-Length'], String(101 * 1024 * 1024));
+  });
+
+  it('falls back to 1 GiB on an answer that is not a size, or no answer', async () => {
+    for (const limits of [{ packageMaxBytes: 'big' }, { packageMaxBytes: -1 }, { packageMaxBytes: 1.5 }, {}]) {
+      stubFetch({ limits });
+      assert.equal(await packageMaxBytes({ controlPlane: 'https://cp.example.test' }), DEFAULT_MAX_BYTES, JSON.stringify(limits));
+    }
+    globalThis.fetch = async () => {
+      throw new Error('connect ECONNREFUSED');
+    };
+    assert.equal(await packageMaxBytes({ controlPlane: 'https://cp.example.test/' }), DEFAULT_MAX_BYTES);
+    assert.equal(DEFAULT_MAX_BYTES, 1024 * 1024 * 1024);
+  });
+
+  it('asks the control plane it uploads to', async () => {
+    const asked = [];
+    globalThis.fetch = async (url) => {
+      asked.push(String(url));
+      return { ok: true, status: 200, statusText: 'OK', text: async () => '{"packageMaxBytes":5}' };
+    };
+    assert.equal(await packageMaxBytes({ controlPlane: 'https://cp.example.test/' }), 5);
+    assert.deepEqual(asked, ['https://cp.example.test/api/limits']);
   });
 });
 

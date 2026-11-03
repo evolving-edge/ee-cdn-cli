@@ -77,6 +77,9 @@ function controlPlane(status) {
   const calls = [];
   globalThis.fetch = async (url, opts = {}) => {
     const u = String(url);
+    // The package limit (#823): not recorded; 404 as from a control plane
+    // without the route, so the 1 GiB default applies.
+    if (u.endsWith('/api/limits')) return { ok: false, status: 404, statusText: 'Not Found', text: async () => '' };
     calls.push({ url: u, method: opts.method ?? 'GET', headers: opts.headers ?? {} });
     const reply = (code, body) => ({
       ok: code >= 200 && code < 300,

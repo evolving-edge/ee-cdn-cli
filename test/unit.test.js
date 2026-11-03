@@ -294,9 +294,10 @@ describe('sub-workload uploads follow the deploy target (#263)', () => {
     const dir = project('with-deploy');
     let called = 0;
     const realFetch = globalThis.fetch;
-    // The status question (#560) answers "not stored"; only the upload counts.
+    // The status question (#560) answers "not stored", and the limit (#823)
+    // is whatever; only the upload counts.
     globalThis.fetch = async (url) => {
-      if (!String(url).includes('/status')) called++;
+      if (!String(url).includes('/status') && !String(url).endsWith('/api/limits')) called++;
       return { ok: true, status: 200, statusText: 'OK', text: async () => '{}' };
     };
     try {

@@ -29,12 +29,36 @@ const PASSTHROUGH = [
 ];
 
 /**
- * The control plane refuses packages over 100 MiB (its configured limit,
- * checked against Content-Length before it reads the body, #819). Mirrored here
- * so an oversized workload fails locally with a clear message.
+ * The largest package the control plane accepts, when it does not say: 1 GiB,
+ * its default since #823 (100 MiB before). A control plane that predates
+ * GET /api/limits answers it 404, and this is used.
  */
-const MAX_BYTES = 100 * 1024 * 1024;
+export const DEFAULT_MAX_BYTES = 1024 * 1024 * 1024;
 const MIB = 1024 * 1024;
+
+/**
+ * The package limit the control plane reports (GET /api/limits,
+ * `packageMaxBytes`, #820), or DEFAULT_MAX_BYTES when it does not say: an
+ * older control plane (404), an error, or an answer that is not a size. The
+ * control plane enforces its own limit either way (413 from Content-Length,
+ * before it reads the body, #819); this is so an oversized package fails
+ * locally, before any byte is sent, with a clear message.
+ */
+export async function packageMaxBytes({ controlPlane }) {
+  try {
+    const res = await fetch(`${controlPlane.replace(/\/$/, '')}/api/limits`);
+    if (!res.ok) return DEFAULT_MAX_BYTES;
+    const body = JSON.parse(await res.text());
+    const n = body?.packageMaxBytes;
+    return Number.isSafeInteger(n) && n > 0 ? n : DEFAULT_MAX_BYTES;
+  } catch {
+    return DEFAULT_MAX_BYTES;
+  }
+}
+
+function formatLimit(bytes) {
+  return bytes % (1024 * MIB) === 0 ? `${bytes / (1024 * MIB)} GiB` : `${(bytes / MIB).toFixed(bytes % MIB ? 1 : 0)} MiB`;
+}
 
 export async function storeWorkload({
   filePath,
@@ -43,13 +67,15 @@ export async function storeWorkload({
   token,
   params = {},
   secret = null,
+  maxBytes,
   logger,
 }) {
   const { size } = statSync(filePath);
-  if (size > MAX_BYTES) {
+  const limit = maxBytes ?? (await packageMaxBytes({ controlPlane }));
+  if (size > limit) {
     throw new Error(
       `Workload is ${(size / MIB).toFixed(1)} MiB; the control plane rejects ` +
-        `bodies over ${MAX_BYTES / MIB} MiB.`,
+        `packages over ${formatLimit(limit)}.`,
     );
   }
 

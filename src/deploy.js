@@ -8,7 +8,7 @@
  * the CLI.
  *
  * Keeping this in one place matters because the failure modes are subtle — the
- * unverifiable domain binding, the builder checksum, the 100 MiB cap — and we
+ * unverifiable domain binding, the builder checksum, the package size limit — and we
  * would rather fix them once than twice.
  */
 import { ensurePragmas } from './pragmas.js';
