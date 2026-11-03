@@ -23,6 +23,8 @@ import {
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { pathToFileURL } from 'node:url';
+import { createServer } from 'node:http';
+import { createHash } from 'node:crypto';
 import { after, afterEach, describe, it } from 'node:test';
 
 import { storeWorkload } from '../src/upload.js';
@@ -92,7 +94,18 @@ describe('storeWorkload request shape', () => {
       calls[0].opts.headers['Content-Type'],
       'application/octet-stream',
     );
-    assert.equal(calls[0].opts.body.toString(), 'ee-workload-bytes');
+    assert.equal(await new Response(calls[0].opts.body).text(), 'ee-workload-bytes');
+  });
+
+  // #819: the package streams from disk, with its exact Content-Length, so
+  // the control plane can refuse an oversized one before reading it.
+  it('streams the file with its Content-Length instead of reading it whole', async () => {
+    const calls = stubFetch();
+    await call();
+    const { body, headers, duplex } = calls[0].opts;
+    assert.equal(headers['Content-Length'], String('ee-workload-bytes'.length));
+    assert.ok(body instanceof ReadableStream, 'body is a stream, not a buffer');
+    assert.equal(duplex, 'half');
   });
 
   it('always sends the hash', async () => {
@@ -577,5 +590,52 @@ describe('#262 regressions reachable around the upload', () => {
       /no secret\/salt/,
     );
     assert.equal(calls.length, 0, 'nothing may be uploaded without the secret');
+  });
+});
+
+// The streamed body against a real HTTP server, through Node's own fetch: the
+// server sees the announced Content-Length (no chunked encoding) and every
+// byte of the file.
+describe('storeWorkload over HTTP', () => {
+  it('sends the whole file with its Content-Length', async () => {
+    const size = 5 * 1024 * 1024 + 3;
+    const bytes = Buffer.alloc(size);
+    for (let i = 0; i < size; i++) bytes[i] = (i * 31) & 0xff;
+    const filePath = workload('stream.ee', bytes);
+    let seen;
+    const server = createServer((req, res) => {
+      const hash = createHash('sha256');
+      let n = 0;
+      req.on('data', (c) => {
+        n += c.length;
+        hash.update(c);
+      });
+      req.on('end', () => {
+        seen = {
+          length: req.headers['content-length'],
+          chunked: req.headers['transfer-encoding'],
+          n,
+          sum: hash.digest('hex'),
+        };
+        res.end(JSON.stringify({ stored: true }));
+      });
+    });
+    await new Promise((r) => server.listen(0, '127.0.0.1', r));
+    try {
+      const { port } = server.address();
+      await storeWorkload({
+        filePath,
+        hash: HASH,
+        controlPlane: `http://127.0.0.1:${port}`,
+        token: 't',
+        logger: quietLogger,
+      });
+    } finally {
+      server.close();
+    }
+    assert.equal(seen.length, String(size));
+    assert.equal(seen.chunked, undefined);
+    assert.equal(seen.n, size);
+    assert.equal(seen.sum, createHash('sha256').update(bytes).digest('hex'));
   });
 });

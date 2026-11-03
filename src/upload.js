@@ -11,7 +11,8 @@
  * mutable "latest" alias server-side.
  */
 import { createDecipheriv, hkdfSync } from 'node:crypto';
-import { readFileSync, statSync } from 'node:fs';
+import { createReadStream, statSync } from 'node:fs';
+import { Readable } from 'node:stream';
 
 /** Query params handleWorkloadStoreRaw understands. */
 const PASSTHROUGH = [
@@ -28,10 +29,9 @@ const PASSTHROUGH = [
 ];
 
 /**
- * The control plane caps request bodies at 100 MiB — handleWorkloadStoreRaw
- * wraps the body in `http.MaxBytesReader(w, r.Body, 100<<20)`. Mirrored here so
- * an oversized workload fails locally with a clear message rather than as a
- * truncated read on their side.
+ * The control plane refuses packages over 100 MiB (its configured limit,
+ * checked against Content-Length before it reads the body, #819). Mirrored here
+ * so an oversized workload fails locally with a clear message.
  */
 const MAX_BYTES = 100 * 1024 * 1024;
 const MIB = 1024 * 1024;
@@ -67,9 +67,14 @@ export async function storeWorkload({
     headers: {
       Authorization: `Bearer ${token}`,
       'Content-Type': 'application/octet-stream',
+      'Content-Length': String(size),
       ...secretHeader(secret),
     },
-    body: readFileSync(filePath),
+    // Streamed from disk, never read whole (#819), with its exact length so
+    // the control plane can refuse an oversized package before reading it.
+    // Node's fetch needs duplex: 'half' for a streamed body.
+    body: uploadBody(filePath, size),
+    duplex: 'half',
   });
 
   const text = await res.text();
@@ -91,6 +96,15 @@ export async function storeWorkload({
       (body.alias ? ` (alias ${body.alias})` : ''),
   );
   return body;
+}
+
+/**
+ * The package as a stream of exactly `size` bytes, the size the request's
+ * Content-Length announced (a file that grew since would otherwise send more).
+ */
+export function uploadBody(filePath, size) {
+  if (size === 0) return new Uint8Array(0);
+  return Readable.toWeb(createReadStream(filePath, { start: 0, end: size - 1 }));
 }
 
 /**
