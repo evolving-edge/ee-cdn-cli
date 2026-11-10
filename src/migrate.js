@@ -11,7 +11,7 @@ import { spawnSync } from 'node:child_process';
 import { existsSync, mkdirSync, statSync } from 'node:fs';
 import { isAbsolute, resolve } from 'node:path';
 
-import { DEFAULT_CONTROL_PLANE, builderEnv, builderFlags, ensureBuilder } from './builder.js';
+import { DEFAULT_CONTROL_PLANE, builderEnv, builderFlags, ensureBuilder, lockedDigest } from './builder.js';
 import { defaultCacheDir } from './deploy.js';
 
 /** The ee-builder flags ee-migrate passes. All came with -migrate (#951). */
@@ -53,6 +53,10 @@ export async function migrateSite({
     throw new Error(`Not a directory: ${src}`);
   }
 
+  // Read before ensureBuilder, which pins whatever it uses on a first run:
+  // what matters for the hint is whether the lockfile already chose it.
+  const pinnedLatest = !builderPath && builderVersion === 'latest' && !builderChecksum && Boolean(lockedDigest(lockfilePath, 'latest'));
+
   let bin;
   if (builderPath) {
     bin = abs(builderPath);
@@ -67,13 +71,21 @@ export async function migrateSite({
   const have = builderFlags(bin, MIGRATE_FLAGS);
   const missing = MIGRATE_FLAGS.filter((f) => !have.includes(f));
   if (missing.length) {
-    // ee-builder was first published with -migrate on 2026-11-10.
-    const hint = builderPath
-      ? 'Rebuild it from the current ee-cdn source (go build -tags nodynamic in ee-builder) and pass that with --builder.'
-      : builderVersion !== 'latest'
-        ? `ee-builder ${builderVersion} was published before it; use "latest" or a label from 2026-11-10 or later with --builder-version.`
-        : `${lockfilePath ?? 'Your lockfile'} pins an older ee-builder latest: delete its "latest:" entry so the current ` +
-          'release is fetched.';
+    // ee-builder was first published with -migrate on 2026-11-10. The hint
+    // names whatever chose this builder.
+    let hint;
+    if (builderPath) {
+      hint = 'Rebuild it from the current ee-cdn source (go build -tags nodynamic in ee-builder) and pass that with --builder.';
+    } else if (builderVersion !== 'latest') {
+      hint = `ee-builder ${builderVersion} was published before it; use "latest" or a label from 2026-11-10 or later with --builder-version.`;
+    } else if (builderChecksum) {
+      hint = 'The checksum given pins an ee-builder from before it.';
+    } else if (pinnedLatest) {
+      hint = `${lockfilePath} pins an older ee-builder latest: delete its "latest:" entry so the current release is fetched.`;
+    } else {
+      hint = 'The latest ee-builder it found, downloaded or cached, predates it. Run again with a working connection so the ' +
+        'current release is fetched, or pass a newer one with --builder.';
+    }
     throw new Error(`ee-builder at ${bin} is too old to migrate: it has no ${missing.join(', ')}. ${hint}`);
   }
 

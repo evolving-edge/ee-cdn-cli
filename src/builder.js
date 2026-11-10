@@ -226,6 +226,11 @@ export async function ensureBuilder({
   return kept;
 }
 
+/** The digest the lockfile pins for this machine's ee-builder version, or null. */
+export function lockedDigest(lockfilePath, version) {
+  return readLock(lockfilePath, targetTriple().key, version);
+}
+
 function readLock(path, key, version) {
   if (!path || !existsSync(path)) return null;
   try {

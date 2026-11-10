@@ -92,10 +92,13 @@ describe('ee-migrate', () => {
 
   it("passes ee-builder's exit status through (1: stopped, or --strict and something was dropped)", () => {
     const d = fresh();
-    site(d);
+    const s = site(d);
     const b = fakeBuilder(d, { status: 1 });
     const r = run(['my site', '--strict', '--builder', b.bin], { cwd: d });
     assert.equal(r.status, 1);
+    // The 1 is the builder's, not one of ee-migrate's own errors.
+    assert.deepEqual(b.calls(), [['-migrate', s, '-strict']]);
+    assert.doesNotMatch(r.stderr, /ee-migrate:/);
   });
 
   it('runs ee-builder without the deploy token (#832)', () => {
@@ -114,6 +117,33 @@ describe('ee-migrate', () => {
     const r = run(['my site', '--builder', b.bin], { cwd: d });
     assert.equal(r.status, 1);
     assert.match(r.stderr, /too old to migrate: it has no -migrate, -migrate-redirects, -migrate-headers, -strict/);
+    assert.deepEqual(b.calls(), []);
+  });
+
+  it('names the lockfile only when it pins latest (#965)', async () => {
+    const d = fresh();
+    site(d);
+    const b = fakeBuilder(d, { usage: '  -images string\\n' });
+    const cache = join(d, 'cache');
+    mkdirSync(cache);
+    // A cached latest with no published digest to compare (offline): the
+    // stand-in is put where ensureBuilder looks, and the control plane is
+    // unreachable.
+    const { cachedBuilderName } = await import('../src/builder.js');
+    const os = { linux: 'linux', darwin: 'darwin' }[process.platform];
+    const arch = { x64: 'amd64', arm64: 'arm64' }[process.arch];
+    writeFileSync(join(cache, cachedBuilderName('latest', `${os}-${arch}`, os)), readFileSync(b.bin), { mode: 0o755 });
+    const lock = join(d, 'lock.json');
+    const opts = ['my site', '-q', '--cache-dir', cache, '--lockfile', lock, '--control-plane', 'http://127.0.0.1:9'];
+    let r = run(opts, { cwd: d });
+    assert.equal(r.status, 1);
+    assert.match(r.stderr, /The latest ee-builder it found, downloaded or cached, predates it/);
+    assert.doesNotMatch(r.stderr, /lock\.json pins/);
+    // That run pinned what it used; now the lockfile is what holds it.
+    assert.ok(existsSync(lock));
+    r = run(opts, { cwd: d });
+    assert.equal(r.status, 1);
+    assert.match(r.stderr, /lock\.json pins an older ee-builder latest/);
     assert.deepEqual(b.calls(), []);
   });
 
