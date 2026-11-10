@@ -54,6 +54,36 @@ for `--project` and `--build`.
 **Publii**: set deployment to *Manual*, which writes the site to a folder, then
 point `ee-deploy` at that folder.
 
+## Moving from Netlify
+
+`ee-migrate` reads your site's `netlify.toml` and writes the `_redirects` and `_headers` files Evolving Edge reads:
+
+```bash
+npx --package=@evolving-edge/ee-cdn-cli ee-migrate ./my-site
+```
+
+```
+ee-migrate [folder] [options]
+
+  [folder]               The folder holding netlify.toml. Default: the current folder.
+  --strict               Exit 1 if any setting was dropped.
+  --report <path>        Where to write the JSON report.
+  --redirects <path>     The existing _redirects to add the rules to, when there is more than one.
+  --headers <path>       The existing _headers to add the rules to, when there is more than one.
+  --builder-version <v>  Pin ee-builder instead of using "latest".
+  --help                 Everything else.
+```
+
+It prints what was carried over, each setting it dropped with its line in `netlify.toml` and the reason, and what is left for you to do, such as variables set in Netlify's dashboard. The same report is written as JSON to `ee-migrate-report.json` beside `netlify.toml`, or to a temporary file named in the summary when that would put it inside the deploy folder. Build environment variable names and values are never printed or written.
+
+**Where the files go.** A site that already has a `_redirects` or `_headers` file keeps its own rules, and the translated ones are added after them, in a block marked `ee-migrate`, since Netlify reads `_redirects` before `netlify.toml`. Running `ee-migrate` again replaces that block. With no existing file, the files go into the deploy folder (`publish`) when there is no build command, and beside `netlify.toml` otherwise; then move them into the folder your generator copies into its output (`static/` for Hugo, `public/` for Astro and Vite).
+
+**What is written deploys.** Every rule is checked with the same validator a deploy uses. A rule that wouldn't deploy (a proxy to another site, a rewrite to a Netlify Function, a status other than 200, 301, 302 or 404) stays in the file as a comment, with the reason, and is listed as dropped.
+
+**Exit status.** 0 whenever the files and the report were written, even with settings dropped. `--strict` exits 1 when any setting was dropped; build settings (`command`, `base`, `environment`) and `[dev]` don't count, since they don't change how the deployed site behaves. 1 also means nothing was written: there was no `netlify.toml`, or it doesn't parse.
+
+`ee-migrate` runs ee-builder, downloaded and checked as `ee-deploy` does (see [ee-builder integrity](#ee-builder-integrity)). It needs an ee-builder published on 2026-11-10 or later.
+
 ## GitHub Action
 
 For CI that has no Node of its own (Hugo, Zola, Jekyll, Pelican, mdBook, Sphinx, MkDocs, Quarto and others usually build on Go, Ruby, Python or Rust images), use the GitHub Action, [`evolving-edge/deploy-action`](https://github.com/evolving-edge/deploy-action), listed on GitHub Marketplace as [Deploy to Evolving Edge CDN](https://github.com/marketplace/actions/deploy-to-evolving-edge-cdn). It runs `ee-deploy` from a pinned version of this package and brings its own Node, so the workflow needs no `actions/setup-node` step and no `npm install`:

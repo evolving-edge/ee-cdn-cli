@@ -393,6 +393,11 @@ export function builderEnv(env = process.env) {
  * #644. The first published builder with them is c64bedcb850a (2026-10-23).
  */
 export function builderImageFlags(builderPath) {
+  return builderFlags(builderPath, [...IMAGE_FLAGS, MAX_WIDTH_FLAG]);
+}
+
+/** Which of flags the builder lists in its usage (-h). */
+export function builderFlags(builderPath, flags) {
   const r = spawnSync(builderPath, ['-h'], {
     encoding: 'utf8',
     env: builderEnv(),
@@ -409,7 +414,8 @@ export function builderImageFlags(builderPath) {
     const how = r.signal ? `was killed by ${r.signal}` : `exited ${r.status}`;
     throw new Error(`ee-builder at ${builderPath} ${how} when asked for its flags (-h):\n${usage.trim().slice(-2000)}`);
   }
-  return [...IMAGE_FLAGS, MAX_WIDTH_FLAG].filter((f) => new RegExp(`^\\s+${f}\\b`, 'm').test(usage));
+  // The flag must end the name: -migrate is not -migrate-report.
+  return flags.filter((f) => new RegExp(`^\\s+${f}(?=\\s|$)`, 'm').test(usage));
 }
 
 /**
