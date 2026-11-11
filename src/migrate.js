@@ -8,7 +8,7 @@
  * summary and writes the files and the JSON report.
  */
 import { spawnSync } from 'node:child_process';
-import { existsSync, mkdirSync, statSync } from 'node:fs';
+import { existsSync, mkdirSync, readFileSync, rmSync, statSync, writeFileSync } from 'node:fs';
 import { isAbsolute, resolve } from 'node:path';
 
 import { DEFAULT_CONTROL_PLANE, builderEnv, builderFlags, ensureBuilder, lockedDigest } from './builder.js';
@@ -57,6 +57,20 @@ export async function migrateSite({
   // what matters for the hint is whether the lockfile already chose it.
   const pinnedLatest = !builderPath && builderVersion === 'latest' && !builderChecksum && Boolean(lockedDigest(lockfilePath, 'latest'));
 
+  // ensureBuilder pins the builder it uses in the lockfile. If this run then
+  // refuses that builder, the pin is put back as it was, so a failed
+  // ee-migrate never leaves ee-migrate or ee-deploy held to it (#966).
+  const lock = lockfilePath && !builderPath ? abs(lockfilePath) : null;
+  const lockBefore = lock && existsSync(lock) ? readFileSync(lock) : null;
+  const restoreLock = () => {
+    if (!lock) return false;
+    const now = existsSync(lock) ? readFileSync(lock) : null;
+    if (lockBefore ? now && now.equals(lockBefore) : !now) return false;
+    if (lockBefore) writeFileSync(lock, lockBefore);
+    else rmSync(lock, { force: true });
+    return true;
+  };
+
   let bin;
   if (builderPath) {
     bin = abs(builderPath);
@@ -68,7 +82,13 @@ export async function migrateSite({
 
   // A builder from before -migrate would stop with a usage error that names
   // none of this.
-  const have = builderFlags(bin, MIGRATE_FLAGS);
+  let have;
+  try {
+    have = builderFlags(bin, MIGRATE_FLAGS);
+  } catch (err) {
+    restoreLock();
+    throw err;
+  }
   const missing = MIGRATE_FLAGS.filter((f) => !have.includes(f));
   if (missing.length) {
     // ee-builder was first published with -migrate on 2026-11-10. The hint
@@ -86,7 +106,8 @@ export async function migrateSite({
       hint = 'The latest ee-builder it found, downloaded or cached, predates it. Run again with a working connection so the ' +
         'current release is fetched, or pass a newer one with --builder.';
     }
-    throw new Error(`ee-builder at ${bin} is too old to migrate: it has no ${missing.join(', ')}. ${hint}`);
+    const undone = restoreLock() ? ` ${lockfilePath} is back as it was before this run; don't commit the pin it printed.` : '';
+    throw new Error(`ee-builder at ${bin} is too old to migrate: it has no ${missing.join(', ')}. ${hint}${undone}`);
   }
 
   const r = spawnSync(bin, migrateArgs({ dir: src, strict, report, redirects, headers }), {

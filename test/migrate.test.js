@@ -120,7 +120,7 @@ describe('ee-migrate', () => {
     assert.deepEqual(b.calls(), []);
   });
 
-  it('names the lockfile only when it pins latest (#965)', async () => {
+  it('names the lockfile only when it pins latest, and never leaves a refused builder pinned (#965, #966)', async () => {
     const d = fresh();
     site(d);
     const b = fakeBuilder(d, { usage: '  -images string\\n' });
@@ -132,18 +132,37 @@ describe('ee-migrate', () => {
     const { cachedBuilderName } = await import('../src/builder.js');
     const os = { linux: 'linux', darwin: 'darwin' }[process.platform];
     const arch = { x64: 'amd64', arm64: 'arm64' }[process.arch];
-    writeFileSync(join(cache, cachedBuilderName('latest', `${os}-${arch}`, os)), readFileSync(b.bin), { mode: 0o755 });
+    const key = `${os}-${arch}`;
+    writeFileSync(join(cache, cachedBuilderName('latest', key, os)), readFileSync(b.bin), { mode: 0o755 });
     const lock = join(d, 'lock.json');
     const opts = ['my site', '-q', '--cache-dir', cache, '--lockfile', lock, '--control-plane', 'http://127.0.0.1:9'];
+
+    // No lockfile before: the refused builder isn't pinned, run after run.
+    for (let i = 0; i < 2; i++) {
+      const r = run(opts, { cwd: d });
+      assert.equal(r.status, 1);
+      assert.match(r.stderr, /The latest ee-builder it found, downloaded or cached, predates it/);
+      assert.doesNotMatch(r.stderr, /pins an older/);
+      assert.ok(!existsSync(lock), 'the refused builder was left pinned');
+    }
+
+    // A lockfile with other entries: put back byte for byte.
+    const other = '{\n  "2026-11-03:linux-amd64": "' + 'b'.repeat(64) + '"\n}\n';
+    writeFileSync(lock, other);
     let r = run(opts, { cwd: d });
     assert.equal(r.status, 1);
-    assert.match(r.stderr, /The latest ee-builder it found, downloaded or cached, predates it/);
-    assert.doesNotMatch(r.stderr, /lock\.json pins/);
-    // That run pinned what it used; now the lockfile is what holds it.
-    assert.ok(existsSync(lock));
+    assert.match(r.stderr, /is back as it was before this run/);
+    assert.equal(readFileSync(lock, 'utf8'), other);
+
+    // A lockfile that already pinned latest: named, and left as it is.
+    const { createHash } = await import('node:crypto');
+    const pinned = JSON.stringify({ [`latest:${key}`]: createHash('sha256').update(readFileSync(b.bin)).digest('hex') });
+    writeFileSync(lock, pinned);
     r = run(opts, { cwd: d });
     assert.equal(r.status, 1);
     assert.match(r.stderr, /lock\.json pins an older ee-builder latest/);
+    assert.doesNotMatch(r.stderr, /back as it was/);
+    assert.equal(readFileSync(lock, 'utf8'), pinned);
     assert.deepEqual(b.calls(), []);
   });
 
