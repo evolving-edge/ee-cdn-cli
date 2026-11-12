@@ -56,7 +56,7 @@ point `ee-deploy` at that folder.
 
 ## Moving from Netlify
 
-`ee-migrate` reads your site's `netlify.toml` and writes the `_redirects` and `_headers` files Evolving Edge reads:
+`ee-migrate` reads your site's `netlify.toml` and writes the `_redirects` and `_headers` files Evolving Edge reads, and a GitHub Actions workflow that builds and deploys the site:
 
 ```bash
 npx --package=@evolving-edge/ee-cdn-cli ee-migrate ./my-site
@@ -70,19 +70,34 @@ ee-migrate [folder] [options]
   --report <path>        Where to write the JSON report.
   --redirects <path>     The existing _redirects to add the rules to, when there is more than one.
   --headers <path>       The existing _headers to add the rules to, when there is more than one.
+  --no-workflow          Don't write the deploy workflow.
+  --workflow <path>      Where to write the deploy workflow instead.
+  --domain <domain>      Write this domain into the workflow instead of reading EE_CDN_DOMAIN.
+  --project <id>         Write this project ID into the workflow instead of reading EE_CDN_PROJECT_ID.
+  --secret <NAME>        Read this build variable from a repository secret. Repeatable.
+  --plain <NAME>         Write this build variable's value into the workflow. Repeatable.
   --builder-version <v>  Pin ee-builder instead of using "latest".
   --help                 Everything else.
 ```
 
-It prints what was carried over, each setting it dropped with its line in `netlify.toml` and the reason, and what is left for you to do, such as variables set in Netlify's dashboard. The same report is written as JSON to `ee-migrate-report.json` beside `netlify.toml`, or to a temporary file named in the summary when that would put it inside the deploy folder. Build environment variable names and values are never printed or written.
+It prints what was carried over, each setting it dropped with its line in `netlify.toml` and the reason, and what is left for you to do, such as variables set in Netlify's dashboard. The same report is written as JSON to `ee-migrate-report.json` beside `netlify.toml`, or to a temporary file named in the summary when that would put it inside the deploy folder.
 
 **Where the files go.** A site that already has a `_redirects` or `_headers` file keeps its own rules, and the translated ones are added after them, in a block marked `ee-migrate`, since Netlify reads `_redirects` before `netlify.toml`. Running `ee-migrate` again replaces that block. With no existing file, the files go into the deploy folder (`publish`) when there is no build command, and beside `netlify.toml` otherwise; then move them into the folder your generator copies into its output (`static/` for Hugo, `public/` for Astro and Vite).
 
+**The deploy workflow.** The build settings (`command`, `base`, `publish` and `environment`, with `[context.production]`'s values used over `[build]`'s) become `.github/workflows/ee-deploy.yml` at the root of the git repository holding the folder. It builds the site the way Netlify did for production deploys and deploys it with [`evolving-edge/deploy-action`](https://github.com/evolving-edge/deploy-action) on every push to the default branch.
+
+- **Toolchains:** Node, at the version the site names, and Hugo are set up. Any other tool (make, Python, Ruby and others) is named in the summary and marked in the workflow for you to add.
+- **Domain, project and token:** read from the repository variables `EE_CDN_DOMAIN` and `EE_CDN_PROJECT_ID` (or the values `--domain` and `--project` give) and the secret `EE_CDN_TOKEN`. The summary prints the `gh` commands that create them.
+- **Build variables:** one whose name holds `TOKEN`, `KEY`, `SECRET`, `PASSWORD` or `AUTH`, or whose value looks like a credential, is read from a repository secret of the same name, and the summary says to rotate it, since it's committed in `netlify.toml`. `--secret` and `--plain` override that for one variable. Values are never printed or put in the report; names are, since the workflow holds them anyway.
+- **An existing file:** a workflow ee-migrate wrote is replaced on the next run. If `ee-deploy.yml` is there and ee-migrate didn't write it, nothing at all is written; name another file with `--workflow`, or skip the workflow with `--no-workflow`.
+
+With `--no-workflow`, the build settings are reported as handled elsewhere, and the environment by count only, with no names.
+
 **What is written deploys.** Every rule is checked with the same validator a deploy uses. A rule that wouldn't deploy (a proxy to another site, a rewrite to a Netlify Function, a status other than 200, 301, 302 or 404) stays in the file as a comment, with the reason, and is listed as dropped.
 
-**Exit status.** 0 whenever the files and the report were written, even with settings dropped. `--strict` exits 1 when any setting was dropped; build settings (`command`, `base`, `environment`) and `[dev]` don't count, since they don't change how the deployed site behaves. 1 also means nothing was written: there was no `netlify.toml`, or it doesn't parse.
+**Exit status.** 0 whenever the files and the report were written, even with settings dropped. `--strict` exits 1 when any setting was dropped; with `--no-workflow`, build settings (`command`, `base`, `environment`) don't count, nor does `[dev]`, since they don't change how the deployed site behaves. 1 also means nothing was written: there was no `netlify.toml`, it doesn't parse, or a workflow file ee-migrate didn't write is in the way.
 
-`ee-migrate` runs ee-builder, downloaded and checked as `ee-deploy` does (see [ee-builder integrity](#ee-builder-integrity)). It needs an ee-builder published on 2026-11-10 or later.
+`ee-migrate` runs ee-builder, downloaded and checked as `ee-deploy` does (see [ee-builder integrity](#ee-builder-integrity)). It needs an ee-builder published on 2026-11-10 or later; the workflow options need one with the deploy workflow, and `--no-workflow` is ignored by an older one, which writes no workflow.
 
 ## GitHub Action
 

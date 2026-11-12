@@ -1,7 +1,8 @@
 #!/usr/bin/env node
 /**
  * ee-migrate — translate a site's netlify.toml into the _redirects and
- * _headers files Evolving Edge reads (#938).
+ * _headers files Evolving Edge reads (#938), and its build settings into a
+ * GitHub Actions deploy workflow (#939).
  *
  *   ee-migrate ./my-site
  *
@@ -28,9 +29,17 @@ USAGE
   _headers keeps its own rules; the translated ones are added after them.
   Running it again replaces what it added.
 
+  It also writes the build settings as a GitHub Actions workflow,
+  .github/workflows/ee-deploy.yml at the root of the git repository holding
+  [folder], that builds the site and deploys it on every push. Build
+  environment variables that look like credentials are read from repository
+  secrets; their values are never written or printed. A workflow file that
+  ee-migrate didn't write is never replaced.
+
 OPTIONS
   --strict               Exit 1 if any setting was dropped. Settings handled
-                         elsewhere, such as build settings, don't count
+                         elsewhere, such as build settings with
+                         --no-workflow, don't count
   --report <path>        Where to write the JSON report. Default
                          ee-migrate-report.json in [folder], or a temporary
                          file when that would be inside the deploy folder
@@ -38,6 +47,17 @@ OPTIONS
                          the site has more than one
   --headers <path>       The existing _headers to add the rules to, when the
                          site has more than one
+  --no-workflow          Don't write the deploy workflow
+  --workflow <path>      Where to write the deploy workflow instead
+  --domain <domain>      Write this domain into the workflow instead of
+                         reading the EE_CDN_DOMAIN repository variable
+  --project <id>         Write this project ID into the workflow instead of
+                         reading the EE_CDN_PROJECT_ID repository variable
+  --secret <NAME>        Read this build environment variable from a
+                         repository secret, whatever it looks like. Repeatable
+  --plain <NAME>         Write this build environment variable's value into
+                         the workflow, even if it looks like a credential.
+                         Repeatable
   --builder <path>       Use a local ee-builder instead of downloading one
   --builder-version <v>  Pin the ee-builder version instead of "latest".
                          Defaults to $EE_BUILDER_VERSION
@@ -51,13 +71,16 @@ OPTIONS
 
 EXIT STATUS
   0  The files and the report were written, even if settings were dropped
-  1  Nothing was written (no netlify.toml, or one that doesn't parse), or
-     --strict and a setting was dropped
+  1  Nothing was written (no netlify.toml, one that doesn't parse, or a
+     workflow file ee-migrate didn't write is in the way), or --strict and
+     a setting was dropped
   2  A usage error
 
 EXAMPLES
   ee-migrate
   ee-migrate ./my-site --strict
+  ee-migrate ./my-site --domain www.example.com --secret ALGOLIA_APP_ID
+  ee-migrate ./my-site --no-workflow
 `;
 
 function fail(message, { usage = false, code = 2 } = {}) {
@@ -75,6 +98,12 @@ try {
       report: { type: 'string' },
       redirects: { type: 'string' },
       headers: { type: 'string' },
+      'no-workflow': { type: 'boolean', default: false },
+      workflow: { type: 'string' },
+      domain: { type: 'string' },
+      project: { type: 'string' },
+      secret: { type: 'string', multiple: true },
+      plain: { type: 'string', multiple: true },
       builder: { type: 'string' },
       'builder-version': { type: 'string' },
       lockfile: { type: 'string' },
@@ -114,6 +143,12 @@ try {
     report: opts.report ?? null,
     redirects: opts.redirects ?? null,
     headers: opts.headers ?? null,
+    noWorkflow: opts['no-workflow'],
+    workflow: opts.workflow ?? null,
+    domain: opts.domain ?? null,
+    project: opts.project ?? null,
+    secret: opts.secret ?? [],
+    plain: opts.plain ?? [],
     builderPath: opts.builder ?? null,
     builderVersion: opts['builder-version'] ?? process.env.EE_BUILDER_VERSION ?? 'latest',
     lockfilePath: opts.lockfile ?? '.ee-builder-lock.json',
