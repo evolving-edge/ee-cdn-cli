@@ -89,7 +89,7 @@ It prints what was carried over, each setting it dropped with its line in `netli
 - **Where it builds:** as on Netlify, `base` is relative to the repository root; with no `base`, the build runs in the folder holding `netlify.toml`.
 - **Toolchains:** Node, at the version the site names, and Hugo are set up. Any other tool (make, Python, Ruby and others) is named in the summary and marked in the workflow for you to add.
 - **Domain, project and token:** read from the repository variables `EE_CDN_DOMAIN` and `EE_CDN_PROJECT_ID` (or the values `--domain` and `--project` give) and the secret `EE_CDN_TOKEN`. The summary prints the `gh` commands that create them.
-- **Build variables:** one whose name holds `TOKEN`, `KEY`, `SECRET`, `PASSWORD` or `AUTH`, or whose value looks like a credential, is read from a repository secret of the same name, and the summary says to rotate it, since it's committed in `netlify.toml`. `--secret` and `--plain` override that for one variable. Values are never printed or put in the report; names are, since the workflow holds them anyway.
+- **Build variables:** one whose name holds `TOKEN`, `KEY`, `SECRET`, `PASSWORD` or `AUTH`, or whose value looks like a credential, is read from a repository secret of the same name, given only to the install and build steps, and the summary says to rotate it, since it's committed in `netlify.toml`. `--secret` and `--plain` override that for one variable. Values are never printed or put in the report; names are, since the workflow holds them anyway.
 - **An existing file:** a workflow ee-migrate wrote for the same `netlify.toml` is replaced on the next run. If `ee-deploy.yml` is there and ee-migrate didn't write it, or wrote it for another site in the repository, nothing at all is written; name another file with `--workflow`, or skip the workflow with `--no-workflow`.
 
 With `--no-workflow`, the build settings are reported as handled elsewhere, and the environment by count only, with no names.
@@ -98,7 +98,7 @@ With `--no-workflow`, the build settings are reported as handled elsewhere, and 
 
 **Exit status.** 0 whenever the files and the report were written, even with settings dropped. `--strict` exits 1 when any setting was dropped; with `--no-workflow`, build settings (`command`, `base`, `environment`) don't count, nor does `[dev]`, since they don't change how the deployed site behaves. 1 also means nothing was written: there was no `netlify.toml`, it doesn't parse, or a workflow file ee-migrate didn't write is in the way.
 
-`ee-migrate` runs ee-builder, downloaded and checked as `ee-deploy` does (see [ee-builder integrity](#ee-builder-integrity)). It needs an ee-builder published on 2026-11-10 or later; the workflow options need one with the deploy workflow, and `--no-workflow` is ignored by an older one, which writes no workflow.
+`ee-migrate` runs ee-builder, downloaded and checked as `ee-deploy` does (see [ee-builder integrity](#ee-builder-integrity)). It needs an ee-builder published on 2026-11-10 or later. An older one than the deploy workflow writes none, and says so; the workflow options need one that has it.
 
 ## GitHub Action
 

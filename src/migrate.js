@@ -19,11 +19,13 @@ import { defaultCacheDir } from './deploy.js';
 export const MIGRATE_FLAGS = ['-migrate', '-migrate-report', '-migrate-redirects', '-migrate-headers', '-strict'];
 
 /**
- * The deploy workflow's flags (#939), which came later. One is needed only
- * when its option is given, except -migrate-no-workflow: a builder without
- * it writes no workflow anyway, so it is then left out.
+ * The deploy workflow's flags (#939), which came later. ee-builder writes the
+ * workflow only when given -migrate-write-workflow, so an ee-migrate from
+ * before it never gets one from a newer builder. This one passes it unless
+ * --no-workflow is given and the builder has it; a builder without it writes
+ * no workflow, and the others are then refused when their options are given.
  */
-export const WORKFLOW_FLAGS = ['-migrate-no-workflow', '-migrate-workflow', '-migrate-domain', '-migrate-project', '-migrate-secret', '-migrate-plain'];
+export const WORKFLOW_FLAGS = ['-migrate-write-workflow', '-migrate-workflow', '-migrate-domain', '-migrate-project', '-migrate-secret', '-migrate-plain'];
 
 /**
  * Set for ee-builder so its messages name ee-migrate's options (--workflow)
@@ -36,13 +38,13 @@ const abs = (p) => (isAbsolute(p) ? p : resolve(process.cwd(), p));
 /** The arguments for one ee-builder -migrate run. Paths are made absolute. */
 export function migrateArgs({
   dir, strict = false, report = null, redirects = null, headers = null,
-  noWorkflow = false, workflow = null, domain = null, project = null, secret = [], plain = [],
+  writeWorkflow = false, workflow = null, domain = null, project = null, secret = [], plain = [],
 }) {
   const args = ['-migrate', abs(dir)];
   if (report) args.push('-migrate-report', abs(report));
   if (redirects) args.push('-migrate-redirects', abs(redirects));
   if (headers) args.push('-migrate-headers', abs(headers));
-  if (noWorkflow) args.push('-migrate-no-workflow');
+  if (writeWorkflow) args.push('-migrate-write-workflow');
   if (workflow) args.push('-migrate-workflow', abs(workflow));
   if (domain) args.push('-migrate-domain', domain);
   if (project) args.push('-migrate-project', project);
@@ -157,9 +159,12 @@ export async function migrateSite({
     throw new Error(`ee-builder at ${bin} is too old to migrate: it has no ${missing.join(', ')}. ${hint}${undone}`);
   }
 
+  if (!noWorkflow && !have.includes('-migrate-write-workflow')) {
+    logger.warn(`ee-builder at ${bin} predates the deploy workflow, so no workflow is written. Use a newer ee-builder for one.`);
+  }
   const args = migrateArgs({
     dir: src, strict, report, redirects, headers,
-    noWorkflow: noWorkflow && have.includes('-migrate-no-workflow'),
+    writeWorkflow: !noWorkflow && have.includes('-migrate-write-workflow'),
     workflow, domain, project, secret, plain,
   });
   const r = spawnSync(bin, args, {

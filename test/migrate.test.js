@@ -15,7 +15,7 @@ import { builderFlags } from '../src/builder.js';
 import { MIGRATE_FLAGS, WORKFLOW_FLAGS, migrateArgs } from '../src/migrate.js';
 
 const CLI = fileURLToPath(new URL('../bin/ee-migrate.js', import.meta.url));
-const usageOf = (flags) => flags.map((f) => `  ${f}${f === '-strict' || f === '-migrate-no-workflow' ? '' : ' string'}\\n`).join('');
+const usageOf = (flags) => flags.map((f) => `  ${f}${f === '-strict' || f === '-migrate-write-workflow' ? '' : ' string'}\\n`).join('');
 // A builder from before the deploy workflow (#939), and one with it.
 const ALL_FLAGS = usageOf(MIGRATE_FLAGS);
 const WITH_WORKFLOW = usageOf([...MIGRATE_FLAGS, ...WORKFLOW_FLAGS]);
@@ -91,6 +91,8 @@ describe('ee-migrate', () => {
     const r = run(['--builder', b.bin], { cwd: s });
     assert.equal(r.status, 0, r.stderr);
     assert.deepEqual(b.calls(), [['-migrate', s]]);
+    // A builder from before the workflow: said, not failed.
+    assert.match(r.stderr, /predates the deploy workflow, so no workflow is written/);
   });
 
   it("passes ee-builder's exit status through (1: stopped, or --strict and something was dropped)", () => {
@@ -192,6 +194,7 @@ describe('ee-migrate', () => {
     assert.equal(r.status, 0, r.stderr);
     assert.deepEqual(b.calls(), [[
       '-migrate', s,
+      '-migrate-write-workflow',
       '-migrate-workflow', join(d, 'ci/deploy.yml'),
       '-migrate-domain', 'www.example.com',
       '-migrate-project', 'proj_abc',
@@ -208,14 +211,19 @@ describe('ee-migrate', () => {
     assert.match(b.env(), /^EE_MIGRATE_CLI=1$/m);
   });
 
-  it('passes --no-workflow to a builder that has it, and leaves it out for one that writes no workflow', () => {
-    for (const [usage, want] of [[WITH_WORKFLOW, ['-migrate-no-workflow']], [ALL_FLAGS, []]]) {
+  it('asks a builder that has the workflow for it unless --no-workflow, and never one without it', () => {
+    for (const [usage, args, want] of [
+      [WITH_WORKFLOW, [], ['-migrate-write-workflow']],
+      [WITH_WORKFLOW, ['--no-workflow'], []],
+      [ALL_FLAGS, ['--no-workflow'], []],
+    ]) {
       const d = fresh();
       const s = site(d);
       const b = fakeBuilder(d, { usage });
-      const r = run(['my site', '--no-workflow', '--builder', b.bin], { cwd: d });
+      const r = run(['my site', ...args, '--builder', b.bin], { cwd: d });
       assert.equal(r.status, 0, r.stderr);
       assert.deepEqual(b.calls(), [['-migrate', s, ...want]]);
+      assert.doesNotMatch(r.stderr, /predates/);
     }
   });
 
@@ -242,7 +250,7 @@ describe('migrateArgs and builderFlags', () => {
   it('builds the argument list', () => {
     assert.deepEqual(migrateArgs({ dir: '/s' }), ['-migrate', '/s']);
     assert.deepEqual(migrateArgs({ dir: '/s', strict: true }), ['-migrate', '/s', '-strict']);
-    assert.deepEqual(migrateArgs({ dir: '/s', noWorkflow: true }), ['-migrate', '/s', '-migrate-no-workflow']);
+    assert.deepEqual(migrateArgs({ dir: '/s', writeWorkflow: true }), ['-migrate', '/s', '-migrate-write-workflow']);
   });
 
   it('matches a flag only by its whole name', () => {
