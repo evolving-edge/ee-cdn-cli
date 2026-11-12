@@ -86,10 +86,11 @@ It prints what was carried over, each setting it dropped with its line in `netli
 
 **The deploy workflow.** The build settings (`command`, `base`, `publish` and `environment`, with `[context.production]`'s values used over `[build]`'s) become `.github/workflows/ee-deploy.yml` at the root of the git repository holding the folder. It builds the site the way Netlify did for production deploys and deploys it with [`evolving-edge/deploy-action`](https://github.com/evolving-edge/deploy-action) on every push to the default branch.
 
+- **Where it builds:** as on Netlify, `base` is relative to the repository root; with no `base`, the build runs in the folder holding `netlify.toml`.
 - **Toolchains:** Node, at the version the site names, and Hugo are set up. Any other tool (make, Python, Ruby and others) is named in the summary and marked in the workflow for you to add.
 - **Domain, project and token:** read from the repository variables `EE_CDN_DOMAIN` and `EE_CDN_PROJECT_ID` (or the values `--domain` and `--project` give) and the secret `EE_CDN_TOKEN`. The summary prints the `gh` commands that create them.
 - **Build variables:** one whose name holds `TOKEN`, `KEY`, `SECRET`, `PASSWORD` or `AUTH`, or whose value looks like a credential, is read from a repository secret of the same name, and the summary says to rotate it, since it's committed in `netlify.toml`. `--secret` and `--plain` override that for one variable. Values are never printed or put in the report; names are, since the workflow holds them anyway.
-- **An existing file:** a workflow ee-migrate wrote is replaced on the next run. If `ee-deploy.yml` is there and ee-migrate didn't write it, nothing at all is written; name another file with `--workflow`, or skip the workflow with `--no-workflow`.
+- **An existing file:** a workflow ee-migrate wrote for the same `netlify.toml` is replaced on the next run. If `ee-deploy.yml` is there and ee-migrate didn't write it, or wrote it for another site in the repository, nothing at all is written; name another file with `--workflow`, or skip the workflow with `--no-workflow`.
 
 With `--no-workflow`, the build settings are reported as handled elsewhere, and the environment by count only, with no names.
 
