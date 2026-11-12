@@ -34,7 +34,8 @@ USAGE
   [folder], that builds the site and deploys it on every push. Build
   environment variables that look like credentials are read from repository
   secrets; their values are never written or printed. A workflow file that
-  ee-migrate didn't write for this site is never replaced.
+  ee-migrate didn't write for this site, or that has been edited since, is
+  never replaced.
 
 OPTIONS
   --strict               Exit 1 if any setting was dropped. Settings handled
@@ -72,7 +73,7 @@ OPTIONS
 EXIT STATUS
   0  The files and the report were written, even if settings were dropped
   1  Nothing was written (no netlify.toml, one that doesn't parse, or a
-     workflow file that isn't this site's is in the way), or --strict and
+     workflow file ee-migrate can't replace is in the way), or --strict and
      a setting was dropped
   2  A usage error
 
