@@ -11,7 +11,7 @@
  * mutable "latest" alias server-side.
  */
 import { createDecipheriv, hkdfSync } from 'node:crypto';
-import { createReadStream, statSync } from 'node:fs';
+import { createReadStream, readFileSync, statSync } from 'node:fs';
 import { Readable } from 'node:stream';
 
 /** Query params handleWorkloadStoreRaw understands. */
@@ -87,6 +87,14 @@ export async function storeWorkload({
     }
   }
 
+  // A Level 0 redeploy sends only the blocks the domain's current package
+  // lacks, when the control plane says it holds some (#920). If that is not
+  // on offer or not accepted, the whole package is uploaded, as before.
+  const reused = await storeReusingBlocks({
+    filePath, hash, size, controlPlane, token, params, query, logger,
+  });
+  if (reused) return reused;
+
   const url = `${controlPlane.replace(/\/$/, '')}/api/workloads/store-raw?${query}`;
   const res = await fetch(url, {
     method: 'PUT',
@@ -122,6 +130,138 @@ export async function storeWorkload({
       (body.alias ? ` (alias ${body.alias})` : ''),
   );
   return body;
+}
+
+/**
+ * Block-aware upload (#920). ee-builder gives every file of 64 KiB or more
+ * blocks of its own, so a Level 0 redeploy shares most of its blocks with the
+ * package the domain serves now. The control plane's side and the protocol are
+ * in control-plane/workload_reuse.go:
+ *
+ *   1. POST /api/workloads/reuse-plan?hash=&domain= with the package's digest
+ *      record (ee-builder writes it beside the package, `<file>.digest.json`).
+ *      The answer names a base and the blocks of this package it holds.
+ *   2. PUT store-raw with reuseFrom and packageSize, and a body of a 4-byte
+ *      big-endian length, a JSON manifest ({digest, have}), the header and
+ *      index, then the blocks not in `have`.
+ *
+ * Returns the control plane's answer, or null when the whole package should
+ * be uploaded instead: no domain, not Level 0, no record on disk, a control
+ * plane without the route, nothing to reuse, or a block-aware upload that was
+ * not accepted. It never throws: it can only fail into what happened before.
+ */
+async function storeReusingBlocks({ filePath, hash, size, controlPlane, token, params, query, logger }) {
+  if (params.encryptionLevel !== 'level0' || !params.domain) return null;
+  let digest;
+  try {
+    digest = JSON.parse(readFileSync(`${filePath}.digest.json`, 'utf8'));
+  } catch {
+    return null;
+  }
+  if (!Array.isArray(digest?.blocks) || digest.blocks.length === 0 || digest.containerSize !== size) {
+    return null;
+  }
+  const base = controlPlane.replace(/\/$/, '');
+  try {
+    const planQuery = new URLSearchParams({ hash, domain: String(params.domain) });
+    if (params.projectId) planQuery.set('projectId', String(params.projectId));
+    const planRes = await fetch(`${base}/api/workloads/reuse-plan?${planQuery}`, {
+      method: 'POST',
+      headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
+      body: JSON.stringify(digest),
+    });
+    if (!planRes.ok) return null;
+    const plan = JSON.parse(await planRes.text());
+    if (!/^[0-9a-f]{64}$/.test(plan?.base ?? '') || !validHave(plan.have, digest.blocks.length)) {
+      return null;
+    }
+    const parts = reuseUploadParts(digest, plan.have);
+    if (parts.size >= size) return null;
+
+    const reuseQuery = new URLSearchParams(query);
+    reuseQuery.set('reuseFrom', plan.base);
+    reuseQuery.set('packageSize', String(size));
+    const res = await fetch(`${base}/api/workloads/store-raw?${reuseQuery}`, {
+      method: 'PUT',
+      headers: {
+        Authorization: `Bearer ${token}`,
+        'Content-Type': 'application/octet-stream',
+        'Content-Length': String(parts.size),
+      },
+      body: reuseBody(filePath, parts),
+      duplex: 'half',
+    });
+    const text = await res.text();
+    if (!res.ok) {
+      logger.info(
+        `Block-aware upload not accepted (${res.status}); uploading the whole package.`,
+      );
+      return null;
+    }
+    let body = {};
+    try {
+      body = JSON.parse(text);
+    } catch {
+      // As for a whole upload: bare text has been returned before.
+    }
+    logger.info(
+      `Uploaded ${(parts.size / 1e6).toFixed(2)} MB of ${(size / 1e6).toFixed(2)} MB ` +
+        `(the rest is already in the domain's current package) — ${hash.slice(0, 16)}…` +
+        (body.alias ? ` (alias ${body.alias})` : ''),
+    );
+    return body;
+  } catch (err) {
+    logger.info(`Block-aware upload failed (${err?.message ?? err}); uploading the whole package.`);
+    return null;
+  }
+}
+
+/** Block numbers in rising order, each one of the package's, at least one. */
+function validHave(have, blocks) {
+  if (!Array.isArray(have) || have.length === 0) return false;
+  let prev = -1;
+  for (const i of have) {
+    if (!Number.isInteger(i) || i <= prev || i >= blocks) return false;
+    prev = i;
+  }
+  return true;
+}
+
+/**
+ * What a block-aware upload sends: the manifest, and the byte ranges of the
+ * package that go with it (the header and index, then each block not in
+ * `have`, joined where they are next to each other). Ranges are [start, end).
+ */
+export function reuseUploadParts(digest, have) {
+  const manifest = Buffer.from(JSON.stringify({ digest, have }));
+  const prefix = Buffer.alloc(4 + manifest.length);
+  prefix.writeUInt32BE(manifest.length, 0);
+  manifest.copy(prefix, 4);
+  const skip = new Set(have);
+  const ranges = [];
+  let start = 0;
+  let end = digest.blocks[0].offset;
+  digest.blocks.forEach((b, i) => {
+    if (skip.has(i)) {
+      if (end > start) ranges.push([start, end]);
+      start = end = b.offset + b.size;
+    } else {
+      end = b.offset + b.size;
+    }
+  });
+  if (end > start) ranges.push([start, end]);
+  const size = prefix.length + ranges.reduce((n, [a, z]) => n + (z - a), 0);
+  return { prefix, ranges, size };
+}
+
+function reuseBody(filePath, { prefix, ranges }) {
+  async function* chunks() {
+    yield prefix;
+    for (const [start, end] of ranges) {
+      yield* createReadStream(filePath, { start, end: end - 1 });
+    }
+  }
+  return Readable.toWeb(Readable.from(chunks()));
 }
 
 /**
